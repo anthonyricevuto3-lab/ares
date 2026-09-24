@@ -58,13 +58,12 @@ TEST(MissionExit, ScheduleFaultKeepsTheDeadlineMiss) {
     ASSERT_EQ(clock.advance(almost), core::AdvanceStatus::Applied);
     std::binary_semaphore entered{0};
     core::TaskSupervisor<core::ManualClock> supervisor(clock);
-    ASSERT_EQ(supervisor.add(
-                  "edge", core::TaskTiming{100ns, 10ns},
-                  [&](core::ManualClock::time_point, std::stop_token) {
-                      EXPECT_EQ(clock.advance(11ns), core::AdvanceStatus::Applied);
-                      entered.release();
-                  },
-                  {}),
+    ASSERT_EQ(supervisor.add("edge", core::TaskTiming{100ns, 10ns},
+                             [&](core::ManualClock::time_point, std::stop_token) {
+                                 EXPECT_EQ(clock.advance(11ns), core::AdvanceStatus::Applied);
+                                 entered.release();
+                             },
+                             {}),
               core::AddStatus::Ok);
     ASSERT_EQ(supervisor.start(), core::StartStatus::Ok);
     ASSERT_TRUE(entered.try_acquire_for(5s));

@@ -42,8 +42,7 @@ template <typename TimePoint> struct ClockSample {
 // duration_cast is undefined when the result does not fit. This rejects that
 // case instead. Truncation toward zero matches duration_cast when the value fits.
 template <typename ToDuration, typename FromDuration>
-[[nodiscard]] constexpr bool checked_duration_convert(FromDuration from,
-                                                      ToDuration& out) noexcept {
+[[nodiscard]] constexpr bool checked_duration_convert(FromDuration from, ToDuration& out) noexcept {
     using FromRep = typename FromDuration::rep;
     using ToRep = typename ToDuration::rep;
     static_assert(std::is_integral_v<FromRep> && std::is_integral_v<ToRep>);

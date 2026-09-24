@@ -206,9 +206,8 @@ template <Clock C> void TaskSupervisor<C>::thread_main(Worker& worker, std::stop
 
     {
         std::unique_lock lock(gate_mutex_);
-        gate_cv_.wait(lock, stop, [&] {
-            return gate_ != Gate::Closed || shutdown_.stop_requested();
-        });
+        gate_cv_.wait(lock, stop,
+                      [&] { return gate_ != Gate::Closed || shutdown_.stop_requested(); });
         if (gate_ != Gate::Run || stop.stop_requested() || shutdown_.stop_requested()) {
             return;
         }

@@ -95,7 +95,8 @@ TEST(HostClockConversion, AcceptsARepresentableNanosecondValue) {
 TEST(HostClockConversion, RejectsADurationThatCannotBecomeNanoseconds) {
     using Seconds = std::chrono::duration<std::int64_t>;
     core::Duration out{};
-    EXPECT_FALSE(core::checked_duration_convert(Seconds{std::numeric_limits<std::int64_t>::max()}, out));
+    EXPECT_FALSE(
+        core::checked_duration_convert(Seconds{std::numeric_limits<std::int64_t>::max()}, out));
     EXPECT_TRUE(core::checked_duration_convert(Seconds{1}, out));
     EXPECT_EQ(out, 1s);
 }

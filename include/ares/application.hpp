@@ -26,7 +26,9 @@ enum class ExitCode : int {
 // Test injection for ares::run. Not a command-line flag. None is the flight path.
 enum class InjectedFault : std::uint8_t { None, WorkerThrows, ScheduleOverflow };
 
-[[nodiscard]] constexpr int to_int(ExitCode code) noexcept { return static_cast<int>(code); }
+[[nodiscard]] constexpr int to_int(ExitCode code) noexcept {
+    return static_cast<int>(code);
+}
 
 // Exception outranks an unknown fault, then a schedule fault, then a hook fault.
 template <core::Clock C>
@@ -73,7 +75,8 @@ template <core::Clock C>
 }
 
 // Worker faults outrank a full deadline-miss log. Cycle-log overflow stays success.
-[[nodiscard]] constexpr ExitCode combine_exit(ExitCode faults, bool miss_history_overflow) noexcept {
+[[nodiscard]] constexpr ExitCode combine_exit(ExitCode faults,
+                                              bool miss_history_overflow) noexcept {
     if (faults != ExitCode::Success) {
         return faults;
     }

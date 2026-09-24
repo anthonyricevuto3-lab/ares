@@ -173,8 +173,9 @@ TEST(ExecutiveLogging, ThrowingStreamDoesNotReplaceTheFlightResult) {
     EXPECT_EQ(boot.status, flight::TransitionStatus::Accepted);
     EXPECT_EQ(boot.mode, flight::SpacecraftMode::Standby);
     EXPECT_EQ(executive.mode(), flight::SpacecraftMode::Standby);
-    EXPECT_EQ(of_type<flight::ModeChangedEvent<core::ManualClock::time_point>>(events.snapshot()).size(),
-              2U);
+    EXPECT_EQ(
+        of_type<flight::ModeChangedEvent<core::ManualClock::time_point>>(events.snapshot()).size(),
+        2U);
 
     flight::BootResult again;
     EXPECT_NO_THROW(again = executive.boot_to_standby());
@@ -195,6 +196,7 @@ TEST(ExecutiveLogging, ThrowingStreamDoesNotReplaceTheFlightResult) {
     EXPECT_NO_THROW(accepted = executive.accept(flight::Command::StartMission));
     EXPECT_EQ(accepted, flight::CommandStatus::Accepted);
     EXPECT_EQ(executive.mode(), flight::SpacecraftMode::Nominal);
-    EXPECT_EQ(of_type<flight::ModeChangedEvent<core::ManualClock::time_point>>(events.snapshot()).size(),
-              3U);
+    EXPECT_EQ(
+        of_type<flight::ModeChangedEvent<core::ManualClock::time_point>>(events.snapshot()).size(),
+        3U);
 }

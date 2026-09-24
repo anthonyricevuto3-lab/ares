@@ -10,8 +10,7 @@ template <core::Clock C> typename C::time_point FlightExecutive<C>::stamp() cons
     return sample.status == core::ClockStatus::Ok ? sample.time : time_point{};
 }
 
-template <core::Clock C>
-void FlightExecutive<C>::store(const SystemEvent<time_point>& event) {
+template <core::Clock C> void FlightExecutive<C>::store(const SystemEvent<time_point>& event) {
     (void)events_.publish(event);
 }
 
@@ -47,8 +46,8 @@ template <core::Clock C> BootResult FlightExecutive<C>::boot_to_standby() {
         store(SystemEvent<time_point>{ModeTransitionRejected<time_point>{
             current, current, TransitionRejectReason::BootRejected, stamp()}});
         try {
-            logger_.warn("executive", std::string("boot rejected while in ") +
-                                          std::string(to_string(current)));
+            logger_.warn("executive",
+                         std::string("boot rejected while in ") + std::string(to_string(current)));
         } catch (...) {
         }
         return BootResult{TransitionStatus::Rejected, current};

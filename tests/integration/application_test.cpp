@@ -54,6 +54,8 @@ TEST(Application, ZeroDurationBootsAndShutsDown) {
 
 TEST(ApplicationExit, CombinePrefersWorkerFaultOverMissHistory) {
     EXPECT_EQ(ares::combine_exit(ares::ExitCode::Success, false), ares::ExitCode::Success);
-    EXPECT_EQ(ares::combine_exit(ares::ExitCode::Success, true), ares::ExitCode::FaultHistoryOverflow);
-    EXPECT_EQ(ares::combine_exit(ares::ExitCode::WorkerException, true), ares::ExitCode::WorkerException);
+    EXPECT_EQ(ares::combine_exit(ares::ExitCode::Success, true),
+              ares::ExitCode::FaultHistoryOverflow);
+    EXPECT_EQ(ares::combine_exit(ares::ExitCode::WorkerException, true),
+              ares::ExitCode::WorkerException);
 }

@@ -96,11 +96,12 @@ int run(int argc, char** argv, InjectedFault fault) {
                 message[used] = character;
                 ++used;
             }
-            const auto written = std::to_chars(message + used, message + sizeof(message),
-                                               event.elapsed.count());
+            const auto written =
+                std::to_chars(message + used, message + sizeof(message), event.elapsed.count());
             if (written.ec == std::errc{}) {
-                runtime.logger_.warn(event.id.text(),
-                                     std::string_view{message, static_cast<std::size_t>(written.ptr - message)});
+                runtime.logger_.warn(
+                    event.id.text(),
+                    std::string_view{message, static_cast<std::size_t>(written.ptr - message)});
             } else {
                 runtime.logger_.warn(event.id.text(), "deadline missed");
             }
@@ -173,7 +174,8 @@ int run(int argc, char** argv, InjectedFault fault) {
             message[used] = character;
             ++used;
         }
-        const auto index_text = std::to_chars(message + used, message + sizeof(message), worker.index);
+        const auto index_text =
+            std::to_chars(message + used, message + sizeof(message), worker.index);
         if (index_text.ec != std::errc{}) {
             continue;
         }
@@ -201,14 +203,14 @@ int run(int argc, char** argv, InjectedFault fault) {
     if (runtime.cycles_.overflowed()) {
         runtime.logger_.warn("executive", "cycle log overwrote older records");
     }
-    runtime.logger_.info("executive",
-                         "shutdown complete navigation=" + std::to_string(runtime.navigation_.cycles()) +
-                             " health=" + std::to_string(runtime.health_.cycles()) +
-                             " comms=" + std::to_string(runtime.comms_.cycles()) +
-                             " misses=" + std::to_string(miss_count) +
-                             " miss_overwrites=" + std::to_string(runtime.misses_.overwrite_count()) +
-                             " cycle_overwrites=" + std::to_string(runtime.cycles_.overwrite_count()) +
-                             " missed_grace=" + std::to_string(report.missed_grace));
+    runtime.logger_.info(
+        "executive",
+        "shutdown complete navigation=" + std::to_string(runtime.navigation_.cycles()) +
+            " health=" + std::to_string(runtime.health_.cycles()) + " comms=" +
+            std::to_string(runtime.comms_.cycles()) + " misses=" + std::to_string(miss_count) +
+            " miss_overwrites=" + std::to_string(runtime.misses_.overwrite_count()) +
+            " cycle_overwrites=" + std::to_string(runtime.cycles_.overwrite_count()) +
+            " missed_grace=" + std::to_string(report.missed_grace));
     return to_int(combine_exit(exit_code_for(runtime.supervisor_), runtime.misses_.overflowed()));
 }
 

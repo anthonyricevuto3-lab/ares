@@ -40,11 +40,11 @@ void write_log(std::ostream& out, std::mutex& mutex, std::string& staging, bool&
                std::string_view message) {
     const ClockSample<typename C::time_point> sample = clock.now();
     std::chrono::milliseconds millis{0};
-    const bool stamp_ok =
-        sample.status == ClockStatus::Ok && checked_duration_convert(sample.time.time_since_epoch(), millis);
-    const std::string line = (stamp_ok ? std::to_string(millis.count()) : std::string("clock-error")) +
-                             " " + std::string(level) + " " +
-                             one_line(component) + " " + one_line(message);
+    const bool stamp_ok = sample.status == ClockStatus::Ok &&
+                          checked_duration_convert(sample.time.time_since_epoch(), millis);
+    const std::string line =
+        (stamp_ok ? std::to_string(millis.count()) : std::string("clock-error")) + " " +
+        std::string(level) + " " + one_line(component) + " " + one_line(message);
     std::unique_lock lock(mutex);
     staging.append(line);
     staging.push_back('\n');

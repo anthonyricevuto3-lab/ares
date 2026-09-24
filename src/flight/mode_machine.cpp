@@ -96,7 +96,8 @@ template <core::Clock C> TransitionStatus ModeMachine<C>::transition(SpacecraftM
     if (on_change_) {
         const FlagGuard guard(notifying_);
         const core::ClockSample<time_point> sample = clock_.now();
-        const time_point stamp = sample.status == core::ClockStatus::Ok ? sample.time : time_point{};
+        const time_point stamp =
+            sample.status == core::ClockStatus::Ok ? sample.time : time_point{};
         on_change_(ModeChangedEvent<time_point>{from, target, stamp});
     }
     return TransitionStatus::Accepted;
