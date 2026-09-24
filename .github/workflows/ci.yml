@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Debug build, test, format, tidy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y ninja-build clang clang-format clang-tidy
+
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCMAKE_C_COMPILER=clang
+          -DCMAKE_CXX_COMPILER=clang++
+          -DARES_ENABLE_SANITIZERS=ON
+          -DARES_WARNINGS_AS_ERRORS=ON
+          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: clang-format
+        run: >
+          find include src tests -type f \( -name '*.hpp' -o -name '*.cpp' \) -print0
+          | xargs -0 clang-format --dry-run --Werror
+
+      - name: clang-tidy
+        run: >
+          find src -name '*.cpp' -print0
+          | xargs -0 clang-tidy -p build --warnings-as-errors='*'

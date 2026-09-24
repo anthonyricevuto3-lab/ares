@@ -1,0 +1,30 @@
+---
+Checks: >
+  bugprone-*,
+  performance-*,
+  modernize-*,
+  readability-*,
+  cppcoreguidelines-*,
+  -modernize-use-trailing-return-type,
+  -modernize-use-std-format,
+  -cppcoreguidelines-avoid-magic-numbers,
+  -readability-magic-numbers,
+  -readability-identifier-length,
+  -cppcoreguidelines-avoid-const-or-ref-data-members,
+  -cppcoreguidelines-pro-bounds-array-to-pointer-decay,
+  -cppcoreguidelines-owning-memory,
+  -modernize-avoid-c-arrays,
+  -cppcoreguidelines-avoid-c-arrays,
+  -readability-function-cognitive-complexity,
+  -cppcoreguidelines-special-member-functions,
+  -bugprone-easily-swappable-parameters,
+  -performance-enum-size,
+  -performance-unnecessary-value-param,
+  -readability-redundant-member-init,
+  -modernize-use-designated-initializers,
+  -modernize-use-scoped-lock,
+  -cppcoreguidelines-pro-bounds-pointer-arithmetic
+WarningsAsErrors: '*'
+HeaderFilterRegex: 'ares[/\\].*'
+FormatStyle: file
+...
