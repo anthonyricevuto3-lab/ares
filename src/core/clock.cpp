@@ -7,6 +7,7 @@
 
 namespace ares::core {
 
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
 ClockSample<SteadyClock::time_point> SteadyClock::now() const {
     const auto elapsed = std::chrono::steady_clock::now().time_since_epoch();
     Duration nanos{};
@@ -16,6 +17,7 @@ ClockSample<SteadyClock::time_point> SteadyClock::now() const {
     return ClockSample<time_point>{ClockStatus::Ok, time_point{nanos}};
 }
 
+// NOLINTNEXTLINE(readability-convert-member-functions-to-static)
 ClockStatus SteadyClock::wait_until(time_point target, const std::stop_token& stop) {
     using Host = std::chrono::steady_clock;
     const Duration stamp = target.time_since_epoch();

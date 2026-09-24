@@ -25,13 +25,13 @@ public:
     [[nodiscard]] Push push(const T& item) {
         std::lock_guard lock(mutex_);
         if (size_ == Capacity) {
-            slots_[next_] = item;
+            slots_.at(next_) = item;
             next_ = (next_ + 1) % Capacity;
             overflow_ = true;
             ++overwrites_;
             return Push::Overwrote;
         }
-        slots_[next_] = item;
+        slots_.at(next_) = item;
         next_ = (next_ + 1) % Capacity;
         ++size_;
         return Push::Stored;
@@ -57,8 +57,10 @@ public:
         std::lock_guard lock(mutex_);
         const std::size_t count = size_ < out.size() ? size_ : out.size();
         const std::size_t first = size_ == Capacity ? next_ : 0;
+        T* destination = out.data();
         for (std::size_t index = 0; index < count; ++index) {
-            out[index] = slots_[(first + index) % Capacity];
+            *destination = slots_.at((first + index) % Capacity);
+            ++destination;
         }
         return count;
     }

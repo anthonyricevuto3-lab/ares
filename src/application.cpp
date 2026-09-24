@@ -91,13 +91,16 @@ int run(int argc, char** argv, InjectedFault fault) {
             (void)runtime.misses_.push(event);
             char message[64];
             constexpr std::string_view prefix{"deadline missed elapsed_ns="};
-            std::size_t used = 0;
+            char* cursor = message;
+            char* const end = message + sizeof(message);
             for (const char character : prefix) {
-                message[used] = character;
-                ++used;
+                if (cursor == end) {
+                    break;
+                }
+                *cursor = character;
+                ++cursor;
             }
-            const auto written =
-                std::to_chars(message + used, message + sizeof(message), event.elapsed.count());
+            const auto written = std::to_chars(cursor, end, event.elapsed.count());
             if (written.ec == std::errc{}) {
                 runtime.logger_.warn(
                     event.id.text(),
@@ -163,30 +166,34 @@ int run(int argc, char** argv, InjectedFault fault) {
 
     const core::ShutdownReport report = runtime.supervisor_.shutdown();
     for (std::size_t slot = 0; slot < report.considered; ++slot) {
-        const core::WorkerShutdown& worker = report.workers[slot];
+        const core::WorkerShutdown& worker = report.workers.at(slot);
         if (!worker.missed_grace) {
             continue;
         }
         char message[96];
         constexpr std::string_view prefix{"worker missed stop grace index="};
-        std::size_t used = 0;
+        char* cursor = message;
+        char* const message_end = message + sizeof(message);
         for (const char character : prefix) {
-            message[used] = character;
-            ++used;
+            if (cursor == message_end) {
+                break;
+            }
+            *cursor = character;
+            ++cursor;
         }
-        const auto index_text =
-            std::to_chars(message + used, message + sizeof(message), worker.index);
+        const auto index_text = std::to_chars(cursor, message_end, worker.index);
         if (index_text.ec != std::errc{}) {
             continue;
         }
-        used = static_cast<std::size_t>(index_text.ptr - message);
+        cursor = index_text.ptr;
         const std::string_view suffix = worker.exited ? " exited-after-grace" : " still-blocked";
-        if (used + suffix.size() < sizeof(message)) {
+        if (static_cast<std::size_t>(message_end - cursor) > suffix.size()) {
             for (const char character : suffix) {
-                message[used] = character;
-                ++used;
+                *cursor = character;
+                ++cursor;
             }
-            runtime.logger_.error("supervisor", std::string_view{message, used});
+            runtime.logger_.error("supervisor", std::string_view{message, static_cast<std::size_t>(
+                                                                              cursor - message)});
         }
     }
 

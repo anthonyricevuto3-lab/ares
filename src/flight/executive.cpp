@@ -4,6 +4,12 @@
 #include <utility>
 
 namespace ares::flight {
+namespace {
+
+// Logging is best-effort after the mode and the typed event are already stored.
+void logging_failed() noexcept {}
+
+} // namespace
 
 template <core::Clock C> typename C::time_point FlightExecutive<C>::stamp() const {
     const core::ClockSample<time_point> sample = clock_.now();
@@ -27,6 +33,7 @@ FlightExecutive<C>::FlightExecutive(C& clock, core::Logger<C>& logger,
             logger_.info("mode", std::string(to_string(event.from)) + " -> " +
                                      std::string(to_string(event.to)));
         } catch (...) {
+            logging_failed();
         }
     });
     modes_.set_on_reject([this](const ModeTransitionRejected<time_point>& event) {
@@ -36,6 +43,7 @@ FlightExecutive<C>::FlightExecutive(C& clock, core::Logger<C>& logger,
                                      std::string(to_string(event.attempted)) + " rejected (" +
                                      std::string(to_string(event.reason)) + ")");
         } catch (...) {
+            logging_failed();
         }
     });
 }
@@ -49,6 +57,7 @@ template <core::Clock C> BootResult FlightExecutive<C>::boot_to_standby() {
             logger_.warn("executive",
                          std::string("boot rejected while in ") + std::string(to_string(current)));
         } catch (...) {
+            logging_failed();
         }
         return BootResult{TransitionStatus::Rejected, current};
     }
@@ -67,6 +76,7 @@ template <core::Clock C> CommandStatus FlightExecutive<C>::accept(Command comman
         try {
             logger_.warn("command", std::string(to_string(command)) + " rejected");
         } catch (...) {
+            logging_failed();
         }
         return CommandStatus::Rejected;
     };
@@ -80,6 +90,7 @@ template <core::Clock C> CommandStatus FlightExecutive<C>::accept(Command comman
     try {
         logger_.info("command", std::string(to_string(command)) + " accepted");
     } catch (...) {
+        logging_failed();
     }
     return CommandStatus::Accepted;
 }

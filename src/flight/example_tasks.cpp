@@ -22,14 +22,15 @@ void record_cycle(std::atomic<std::uint64_t>& cycles, std::atomic<std::uint64_t>
     formats.fetch_add(1, std::memory_order_acq_rel);
 
     char buffer[64];
-    std::size_t used = 0;
+    char* cursor = buffer;
+    char* const end = buffer + sizeof(buffer);
     const auto append = [&](std::string_view text) {
-        if (used + text.size() > sizeof(buffer)) {
+        if (static_cast<std::size_t>(end - cursor) < text.size()) {
             return false;
         }
         for (const char character : text) {
-            buffer[used] = character;
-            ++used;
+            *cursor = character;
+            ++cursor;
         }
         return true;
     };
@@ -38,7 +39,7 @@ void record_cycle(std::atomic<std::uint64_t>& cycles, std::atomic<std::uint64_t>
     }
     const auto scheduled_ms =
         std::chrono::duration_cast<std::chrono::milliseconds>(scheduled.time_since_epoch()).count();
-    const auto result = std::to_chars(buffer + used, buffer + sizeof(buffer), scheduled_ms);
+    const auto result = std::to_chars(cursor, end, scheduled_ms);
     if (result.ec != std::errc{}) {
         return;
     }

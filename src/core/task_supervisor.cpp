@@ -33,7 +33,7 @@ AddStatus TaskSupervisor<C>::add(std::string_view name, TaskTiming timing, TaskW
     if (!id.has_value() || !work || !valid_task_timing(timing)) {
         return AddStatus::Invalid;
     }
-    workers_[count_].emplace(*id, timing, std::move(work), clock_, std::move(hooks));
+    workers_.at(count_).emplace(*id, timing, std::move(work), clock_, std::move(hooks));
     ++count_;
     return AddStatus::Ok;
 }
@@ -46,15 +46,21 @@ template <Clock C> void TaskSupervisor<C>::rollback_launch(std::size_t launched)
     gate_cv_.notify_all();
     request_stop();
     for (std::size_t index = 0; index < launched; ++index) {
-        if (workers_[index]->thread.joinable()) {
-            workers_[index]->thread.join();
+        auto& slot = workers_.at(index);
+        if (!slot.has_value()) {
+            continue;
+        }
+        Worker& worker = slot.value();
+        if (worker.thread.joinable()) {
+            worker.thread.join();
         }
     }
     for (std::size_t index = 0; index < count_; ++index) {
-        if (!workers_[index].has_value()) {
+        auto& slot = workers_.at(index);
+        if (!slot.has_value()) {
             continue;
         }
-        workers_[index]->task.disarm();
+        slot.value().task.disarm();
     }
     shutdown_ = std::stop_source{};
     started_ = false;
@@ -82,13 +88,18 @@ template <Clock C> StartStatus TaskSupervisor<C>::start() {
             if (launch_probe_ != nullptr) {
                 launch_probe_(index);
             }
-            if (workers_[index]->task.arm(start_time) != ArmStatus::Armed) {
+            auto& slot = workers_.at(index);
+            if (!slot.has_value()) {
+                throw std::logic_error("worker slot is empty");
+            }
+            Worker& engaged = slot.value();
+            if (engaged.task.arm(start_time) != ArmStatus::Armed) {
                 throw std::logic_error("periodic task was already armed");
             }
-            workers_[index]->phase.store(WorkerPhase::Idle, std::memory_order_release);
-            workers_[index]->fault.store(static_cast<std::uint8_t>(WorkerFault::None),
-                                         std::memory_order_relaxed);
-            Worker* const worker = &*workers_[index];
+            engaged.phase.store(WorkerPhase::Idle, std::memory_order_release);
+            engaged.fault.store(static_cast<std::uint8_t>(WorkerFault::None),
+                                std::memory_order_relaxed);
+            Worker* const worker = &engaged;
             worker->thread =
                 std::jthread([this, worker](std::stop_token stop) { thread_main(*worker, stop); });
             ++launched;
@@ -112,8 +123,13 @@ template <Clock C> void TaskSupervisor<C>::request_stop() noexcept {
         shutdown_.request_stop();
     }
     for (std::size_t index = 0; index < count_; ++index) {
-        if (workers_[index].has_value() && workers_[index]->thread.joinable()) {
-            workers_[index]->thread.request_stop();
+        auto& slot = *(workers_.data() + index);
+        if (!slot.has_value()) {
+            continue;
+        }
+        Worker& worker = *slot;
+        if (worker.thread.joinable()) {
+            worker.thread.request_stop();
         }
     }
     gate_cv_.notify_all();
@@ -121,28 +137,41 @@ template <Clock C> void TaskSupervisor<C>::request_stop() noexcept {
 
 template <Clock C> void TaskSupervisor<C>::join() {
     for (std::size_t index = 0; index < count_; ++index) {
-        if (workers_[index].has_value() && workers_[index]->thread.joinable()) {
-            workers_[index]->thread.join();
+        auto& slot = workers_.at(index);
+        if (!slot.has_value()) {
+            continue;
+        }
+        Worker& worker = slot.value();
+        if (worker.thread.joinable()) {
+            worker.thread.join();
         }
     }
 }
 
 template <Clock C> bool TaskSupervisor<C>::launched(std::size_t index) const noexcept {
-    if (index >= count_ || !workers_[index].has_value()) {
+    if (index >= count_) {
         return false;
     }
-    if (workers_[index]->thread.joinable()) {
+    const auto& slot = *(workers_.data() + index);
+    if (!slot.has_value()) {
+        return false;
+    }
+    const Worker& worker = *slot;
+    if (worker.thread.joinable()) {
         return true;
     }
-    const WorkerPhase phase = workers_[index]->phase.load(std::memory_order_acquire);
-    return phase != WorkerPhase::Idle;
+    return worker.phase.load(std::memory_order_acquire) != WorkerPhase::Idle;
 }
 
 template <Clock C> bool TaskSupervisor<C>::pending_exit(std::size_t index) const noexcept {
-    if (!launched(index)) {
+    if (index >= count_) {
         return false;
     }
-    return workers_[index]->phase.load(std::memory_order_acquire) != WorkerPhase::Exited;
+    const auto& slot = *(workers_.data() + index);
+    if (!slot.has_value()) {
+        return false;
+    }
+    return (*slot).phase.load(std::memory_order_acquire) != WorkerPhase::Exited;
 }
 
 template <Clock C> ShutdownReport TaskSupervisor<C>::shutdown() {
@@ -167,20 +196,29 @@ template <Clock C> ShutdownReport TaskSupervisor<C>::shutdown() {
         if (!launched(index)) {
             continue;
         }
-        WorkerShutdown& slot = report.workers[report.considered];
-        slot.index = index;
-        slot.phase_after_grace = workers_[index]->phase.load(std::memory_order_acquire);
-        slot.missed_grace = slot.phase_after_grace != WorkerPhase::Exited;
-        if (slot.missed_grace) {
+        WorkerShutdown& recorded = report.workers.at(report.considered);
+        recorded.index = index;
+        const auto& slot = workers_.at(index);
+        if (!slot.has_value()) {
+            continue;
+        }
+        recorded.phase_after_grace = slot.value().phase.load(std::memory_order_acquire);
+        recorded.missed_grace = recorded.phase_after_grace != WorkerPhase::Exited;
+        if (recorded.missed_grace) {
             ++report.missed_grace;
         }
         ++report.considered;
     }
     join();
     for (std::size_t slot = 0; slot < report.considered; ++slot) {
-        const std::size_t index = report.workers[slot].index;
-        report.workers[slot].exited =
-            workers_[index]->phase.load(std::memory_order_acquire) == WorkerPhase::Exited;
+        WorkerShutdown& recorded = report.workers.at(slot);
+        const auto& worker_slot = workers_.at(recorded.index);
+        if (!worker_slot.has_value()) {
+            recorded.exited = false;
+            continue;
+        }
+        recorded.exited =
+            worker_slot.value().phase.load(std::memory_order_acquire) == WorkerPhase::Exited;
     }
     return report;
 }
@@ -265,13 +303,17 @@ template <Clock C> std::uint64_t TaskSupervisor<C>::completed_cycles() const noe
 }
 
 template <Clock C> WorkerHealth TaskSupervisor<C>::health(std::size_t index) const noexcept {
-    if (index >= count_ || !workers_[index].has_value()) {
+    if (index >= count_) {
         return WorkerHealth::Invalid;
     }
-    const WorkerPhase phase = workers_[index]->phase.load(std::memory_order_acquire);
+    const auto& slot = *(workers_.data() + index);
+    if (!slot.has_value()) {
+        return WorkerHealth::Invalid;
+    }
+    const Worker& worker = *slot;
+    const WorkerPhase phase = worker.phase.load(std::memory_order_acquire);
     if (phase == WorkerPhase::Exited) {
-        const auto fault =
-            static_cast<WorkerFault>(workers_[index]->fault.load(std::memory_order_acquire));
+        const auto fault = static_cast<WorkerFault>(worker.fault.load(std::memory_order_acquire));
         return fault == WorkerFault::None ? WorkerHealth::Stopped : WorkerHealth::Faulted;
     }
     if (shutdown_.stop_requested() && phase == WorkerPhase::InWork) {
@@ -282,18 +324,26 @@ template <Clock C> WorkerHealth TaskSupervisor<C>::health(std::size_t index) con
 
 template <Clock C>
 std::optional<WorkerFault> TaskSupervisor<C>::fault(std::size_t index) const noexcept {
-    if (index >= count_ || !workers_[index].has_value()) {
+    if (index >= count_) {
         return std::nullopt;
     }
-    return static_cast<WorkerFault>(workers_[index]->fault.load(std::memory_order_acquire));
+    const auto& slot = *(workers_.data() + index);
+    if (!slot.has_value()) {
+        return std::nullopt;
+    }
+    return static_cast<WorkerFault>((*slot).fault.load(std::memory_order_acquire));
 }
 
 template <Clock C>
 std::optional<DeadlineRecord<C>> TaskSupervisor<C>::deadline_record(std::size_t index) const {
-    if (index >= count_ || !workers_[index].has_value()) {
+    if (index >= count_) {
         return std::nullopt;
     }
-    return workers_[index]->task.deadline_record();
+    const auto& slot = workers_.at(index);
+    if (!slot.has_value()) {
+        return std::nullopt;
+    }
+    return slot.value().task.deadline_record();
 }
 
 template <Clock C> std::stop_token TaskSupervisor<C>::shutdown_token() const noexcept {

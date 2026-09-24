@@ -21,7 +21,7 @@ public:
         }
         TaskId id;
         for (std::size_t index = 0; index < name.size(); ++index) {
-            id.chars_[index] = name[index];
+            id.chars_.at(index) = name.at(index);
         }
         id.length_ = static_cast<std::uint8_t>(name.size());
         return id;

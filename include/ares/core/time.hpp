@@ -58,7 +58,7 @@ template <typename ToDuration, typename FromDuration>
                value <= static_cast<std::intmax_t>(std::numeric_limits<ToRep>::max());
     };
 
-    std::intmax_t scaled = static_cast<std::intmax_t>(from.count());
+    auto scaled = static_cast<std::intmax_t>(from.count());
     if constexpr (num != 1) {
         if (scaled > 0) {
             if (scaled > std::numeric_limits<std::intmax_t>::max() / num) {
