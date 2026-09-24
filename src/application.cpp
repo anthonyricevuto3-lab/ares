@@ -6,7 +6,10 @@
 #include "ares/core/task_supervisor.hpp"
 #include "ares/flight/example_tasks.hpp"
 #include "ares/flight/executive.hpp"
+#include "ares/flight/power_manager.hpp"
+#include "ares/flight/thermal_monitor.hpp"
 #include "ares/launch_options.hpp"
+#include "ares/simulation/sensors.hpp"
 
 #include <array>
 #include <charconv>
@@ -31,22 +34,33 @@ constexpr core::TaskTiming comms_timing{std::chrono::milliseconds{400},
                                         std::chrono::milliseconds{400}};
 
 // Member order is the outlives contract. The supervisor is last, so it is
-// destroyed first and joins every worker before the tasks, logger, event logs,
-// or clock are destroyed.
+// destroyed first and joins every worker before the tasks, sensors, logger,
+// event logs, or clock are destroyed. Sensors outlive the tasks that reference them.
 struct MissionRuntime {
     explicit MissionRuntime(std::ostream& out)
-        : logger_(out, clock_), executive_(clock_, logger_, events_), health_(logger_),
-          navigation_(logger_), comms_(logger_), supervisor_(clock_) {}
+        : logger_(out, clock_), spacecraft_(clock_), imu_(spacecraft_), gps_(spacecraft_),
+          battery_(spacecraft_), temperature_(spacecraft_), executive_(clock_, logger_, events_),
+          health_(logger_), navigation_(logger_, imu_, gps_), comms_(logger_), power_(battery_),
+          thermal_(temperature_), supervisor_(clock_) {
+        spacecraft_.set_epoch_now();
+    }
 
     core::SteadyClock clock_;
     core::Logger<core::SteadyClock> logger_;
     core::EventLog<flight::SystemEvent<core::SteadyClock::time_point>> events_;
     core::BoundedLog<core::TaskCycleEvent<core::SteadyClock::time_point>, 64> cycles_;
     core::BoundedLog<core::DeadlineMissEvent<core::SteadyClock::time_point>, 32> misses_;
+    simulation::SpacecraftModel<core::SteadyClock> spacecraft_;
+    simulation::SimulatedImu<core::SteadyClock> imu_;
+    simulation::SimulatedGps<core::SteadyClock> gps_;
+    simulation::SimulatedBatteryMonitor<core::SteadyClock> battery_;
+    simulation::SimulatedTemperatureSensor<core::SteadyClock> temperature_;
     flight::FlightExecutive<core::SteadyClock> executive_;
     flight::HealthPulse<core::SteadyClock> health_;
     flight::NavigationCadence<core::SteadyClock> navigation_;
     flight::CommBeacon<core::SteadyClock> comms_;
+    flight::PowerManager<core::SteadyClock::time_point> power_;
+    flight::ThermalMonitor<core::SteadyClock::time_point> thermal_;
     core::TaskSupervisor<core::SteadyClock> supervisor_;
 };
 
@@ -130,6 +144,8 @@ int run(int argc, char** argv, InjectedFault fault) {
     if (runtime.supervisor_.add(
             flight::HealthPulse<Steady>::name, health_timing,
             [&runtime](Steady::time_point scheduled, std::stop_token stop) {
+                (void)runtime.power_.sample();
+                (void)runtime.thermal_.sample();
                 runtime.health_(scheduled, stop);
             },
             hooks) != core::AddStatus::Ok) {

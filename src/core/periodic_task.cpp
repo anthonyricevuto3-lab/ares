@@ -144,7 +144,8 @@ PollResult PeriodicTask<C>::finish_cycle(time_point scheduled, time_point comple
     return PollResult::Ran;
 }
 
-template <Clock C> typename PeriodicTask<C>::time_point PeriodicTask<C>::next_release() const noexcept {
+template <Clock C>
+typename PeriodicTask<C>::time_point PeriodicTask<C>::next_release() const noexcept {
     return next_release_;
 }
 
@@ -157,8 +158,8 @@ template <Clock C> DeadlineRecord<C> PeriodicTask<C>::deadline_record() const no
 }
 
 template <Clock C>
-typename PeriodicTask<C>::ReleaseUpdate PeriodicTask<C>::advance_release(time_point scheduled,
-                                                                time_point completed) const {
+typename PeriodicTask<C>::ReleaseUpdate
+PeriodicTask<C>::advance_release(time_point scheduled, time_point completed) const {
     ReleaseUpdate update;
     if (completed < scheduled) {
         if (!checked_time_add(scheduled, period_, update.next)) {

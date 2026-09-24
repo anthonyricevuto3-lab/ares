@@ -1,5 +1,7 @@
 #include "ares/flight/example_tasks.hpp"
 
+#include "ares/flight/navigation.hpp"
+
 #include <charconv>
 #include <chrono>
 #include <cstddef>
@@ -55,6 +57,9 @@ void HealthPulse<C>::operator()(typename C::time_point scheduled, std::stop_toke
 
 template <core::Clock C>
 void NavigationCadence<C>::operator()(typename C::time_point scheduled, std::stop_token stop) {
+    if (!stop.stop_requested() && imu_ != nullptr && gps_ != nullptr) {
+        solution_ = combine_navigation(imu_->read(), gps_->read());
+    }
     record_cycle(cycles_, debug_formats_, logger_, name, action, scheduled, stop);
 }
 

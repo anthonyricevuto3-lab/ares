@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(ARES
-    VERSION 0.1.0
+    VERSION 0.2.0
     DESCRIPTION "Autonomous Resilient Embedded Spacecraft System"
     LANGUAGES CXX
 )
@@ -71,20 +71,32 @@ target_include_directories(ares_core PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(ares_core PUBLIC Threads::Threads)
 ares_configure_target(ares_core)
 
+add_library(ares_hardware INTERFACE)
+target_include_directories(ares_hardware INTERFACE ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(ares_hardware INTERFACE ares_core)
+
 add_library(ares_flight STATIC
     src/flight/mode_machine.cpp
     src/flight/example_tasks.cpp
     src/flight/executive.cpp
 )
 target_include_directories(ares_flight PUBLIC ${PROJECT_SOURCE_DIR}/include)
-target_link_libraries(ares_flight PUBLIC ares_core)
+target_link_libraries(ares_flight PUBLIC ares_hardware)
 ares_configure_target(ares_flight)
+
+add_library(ares_simulation STATIC
+    src/simulation/spacecraft_model.cpp
+    src/simulation/sensors.cpp
+)
+target_include_directories(ares_simulation PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(ares_simulation PUBLIC ares_hardware)
+ares_configure_target(ares_simulation)
 
 add_library(ares_app STATIC
     src/application.cpp
 )
 target_include_directories(ares_app PUBLIC ${PROJECT_SOURCE_DIR}/include)
-target_link_libraries(ares_app PUBLIC ares_flight)
+target_link_libraries(ares_app PUBLIC ares_flight ares_simulation)
 ares_configure_target(ares_app)
 
 add_executable(ares src/main.cpp)
@@ -123,6 +135,10 @@ if(BUILD_TESTING)
         tests/integration/boot_sequence_test.cpp
         tests/integration/application_test.cpp
         tests/integration/mission_fault_test.cpp
+        tests/unit/sensor_sim_test.cpp
+        tests/unit/navigation_solution_test.cpp
+        tests/unit/power_thermal_test.cpp
+        tests/integration/simulated_spacecraft_test.cpp
     )
     target_link_libraries(ares_tests PRIVATE ares_app GTest::gtest_main)
     ares_configure_target(ares_tests)
