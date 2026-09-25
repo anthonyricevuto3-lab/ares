@@ -2,10 +2,13 @@
 
 #include "ares/core/logger.hpp"
 #include "ares/flight/navigation.hpp"
+#include "ares/flight/power_manager.hpp"
+#include "ares/flight/thermal_monitor.hpp"
 #include "ares/hardware/interfaces.hpp"
 
 #include <atomic>
 #include <cstdint>
+#include <optional>
 #include <stop_token>
 #include <string_view>
 
@@ -40,8 +43,8 @@ public:
 
     explicit NavigationCadence(core::Logger<C>& logger) : logger_(logger) {}
     NavigationCadence(core::Logger<C>& logger, const hardware::IImu<time_point>& imu,
-                      const hardware::IGps<time_point>& gps)
-        : logger_(logger), imu_(&imu), gps_(&gps) {}
+                      const hardware::IGps<time_point>& gps, C& clock, NavigationAgeLimits limits)
+        : logger_(logger), imu_(&imu), gps_(&gps), clock_(&clock), limits_(limits) {}
 
     void operator()(typename C::time_point scheduled, std::stop_token stop);
     [[nodiscard]] std::uint64_t cycles() const noexcept {
@@ -50,15 +53,24 @@ public:
     [[nodiscard]] std::uint64_t debug_formats() const noexcept {
         return debug_formats_.load(std::memory_order_acquire);
     }
+    // Latest combination, including a result that is not usable.
     [[nodiscard]] const NavigationSolution<time_point>& solution() const noexcept {
         return solution_;
+    }
+    // Last combination whose usability was Usable. SensorStatus is not acceptance.
+    [[nodiscard]] const std::optional<NavigationSolution<time_point>>&
+    last_usable() const noexcept {
+        return last_usable_;
     }
 
 private:
     core::Logger<C>& logger_;
     const hardware::IImu<time_point>* imu_{nullptr};
     const hardware::IGps<time_point>* gps_{nullptr};
+    C* clock_{nullptr};
+    NavigationAgeLimits limits_{};
     NavigationSolution<time_point> solution_{};
+    std::optional<NavigationSolution<time_point>> last_usable_{};
     std::atomic<std::uint64_t> cycles_{0};
     std::atomic<std::uint64_t> debug_formats_{0};
 };
@@ -83,6 +95,19 @@ private:
     std::atomic<std::uint64_t> cycles_{0};
     std::atomic<std::uint64_t> debug_formats_{0};
 };
+
+// Returns before reading sensors when stop is already requested, so shutdown does not
+// advance the battery or temperature streams.
+template <core::Clock C>
+void run_health_cycle(PowerManager<C>& power, ThermalMonitor<C>& thermal, HealthPulse<C>& health,
+                      typename C::time_point scheduled, std::stop_token stop) {
+    if (stop.stop_requested()) {
+        return;
+    }
+    (void)power.sample();
+    (void)thermal.sample();
+    health(scheduled, stop);
+}
 
 extern template class HealthPulse<core::ManualClock>;
 extern template class HealthPulse<core::SteadyClock>;

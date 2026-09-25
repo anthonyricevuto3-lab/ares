@@ -3,6 +3,7 @@
 #include "ares/flight/thermal_monitor.hpp"
 #include "ares/simulation/sensors.hpp"
 
+#include <array>
 #include <chrono>
 #include <sstream>
 #include <vector>
@@ -48,9 +49,10 @@ std::vector<Snapshot> run_sequence() {
     simulation::SimulatedGps<Clock> gps(model);
     simulation::SimulatedBatteryMonitor<Clock> battery(model);
     simulation::SimulatedTemperatureSensor<Clock> temperature(model);
-    flight::NavigationCadence<Clock> navigation(logger, imu, gps);
-    flight::PowerManager<Time> power(battery);
-    flight::ThermalMonitor<Time> thermal(temperature);
+    constexpr flight::NavigationAgeLimits kAges{.imu = 1s, .gps = 1s};
+    flight::NavigationCadence<Clock> navigation(logger, imu, gps, clock, kAges);
+    flight::PowerManager<Clock> power(battery, clock, 1s);
+    flight::ThermalMonitor<Clock> thermal(temperature, clock, 1s);
 
     std::vector<Snapshot> samples;
     const auto capture = [&] {
@@ -76,10 +78,58 @@ TEST(SimulatedSpacecraft, ManualClockSequenceIsPredictable) {
     EXPECT_EQ(samples[2].navigation.time, Time{2s});
     EXPECT_EQ(samples[2].navigation.angular_rate, (hardware::AngularRateUradps{10, 0, 0}));
     EXPECT_EQ(samples[2].navigation.status, hardware::SensorStatus::Valid);
+    EXPECT_EQ(samples[2].navigation.usability, flight::SampleUsability::Usable);
     EXPECT_EQ(samples[2].battery.voltage.count, 12600);
     EXPECT_EQ(samples[2].temperature.temperature.count, 18000);
 }
 
 TEST(SimulatedSpacecraft, SameInitialStateAndClockSequenceMatch) {
     EXPECT_EQ(run_sequence(), run_sequence());
+}
+
+TEST(SimulatedSpacecraft, SameSeedAndClockSequenceMatch) {
+    const auto run_noisy = [] {
+        Clock clock;
+        simulation::SpacecraftModel<Clock> model(clock);
+        model.set_truth(initial());
+        simulation::SensorNoise noise;
+        noise.mission_seed = 17;
+        noise.acceleration = 30;
+        noise.angular_rate = 5;
+        noise.position = 20;
+        noise.velocity = 4;
+        noise.voltage = 15;
+        noise.current = 2;
+        noise.state_of_charge = 25;
+        noise.temperature = 10;
+        simulation::SimulatedImu<Clock> imu(model, noise);
+        simulation::SimulatedGps<Clock> gps(model, noise);
+        simulation::SimulatedBatteryMonitor<Clock> battery(model, noise);
+        simulation::SimulatedTemperatureSensor<Clock> temperature(model, noise);
+        struct Cycle {
+            hardware::ImuSample<Time> imu{};
+            hardware::GpsSample<Time> gps{};
+            hardware::BatterySample<Time> battery{};
+            hardware::TemperatureSample<Time> temperature{};
+            hardware::SpacecraftState<Time> truth{};
+            constexpr bool operator==(const Cycle&) const = default;
+        };
+        std::array<Cycle, 3> cycles{};
+        for (Cycle& cycle : cycles) {
+            const auto state = model.state_now();
+            EXPECT_TRUE(state.has_value());
+            cycle.truth = *state;
+            cycle.imu = imu.read();
+            cycle.gps = gps.read();
+            cycle.battery = battery.read();
+            cycle.temperature = temperature.read();
+            EXPECT_EQ(clock.advance(1s), ares::core::AdvanceStatus::Applied);
+        }
+        return cycles;
+    };
+    const auto first = run_noisy();
+    const auto second = run_noisy();
+    EXPECT_EQ(first, second);
+    EXPECT_NE(first[1].imu.acceleration, first[1].truth.acceleration);
+    EXPECT_EQ(first[1].truth, second[1].truth);
 }

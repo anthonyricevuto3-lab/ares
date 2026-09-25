@@ -8,41 +8,40 @@ namespace {
 
 constexpr std::int64_t kNanosecondsPerSecond = 1000000000;
 
+// Every int64 factor fits in signed 128-bit, including INT64_MIN * INT64_MIN.
+// The product and the sum are therefore formed without wrapping, and saturation
+// happens only after the true mathematical result is known.
+#if defined(__GNUC__) || defined(__clang__)
+__extension__ using Wide = __int128;
+#else
+#error "ARES integration requires a 128-bit integer"
+#endif
+
+[[nodiscard]] std::int64_t saturating_narrow(Wide value) noexcept {
+    constexpr Wide kMin = static_cast<Wide>(std::numeric_limits<std::int64_t>::min());
+    constexpr Wide kMax = static_cast<Wide>(std::numeric_limits<std::int64_t>::max());
+    if (value > kMax) {
+        return std::numeric_limits<std::int64_t>::max();
+    }
+    if (value < kMin) {
+        return std::numeric_limits<std::int64_t>::min();
+    }
+    return static_cast<std::int64_t>(value);
+}
+
+// rate * elapsed_ns / 1e9, truncated toward zero. Position and attitude both use this.
 [[nodiscard]] std::int64_t integrate(std::int64_t rate_per_second, std::int64_t dt_ns) noexcept {
     if (rate_per_second == 0 || dt_ns == 0) {
         return 0;
     }
-    constexpr auto kMin = std::numeric_limits<std::int64_t>::min();
-    constexpr auto kMax = std::numeric_limits<std::int64_t>::max();
-    if (rate_per_second == kMin || dt_ns == kMin) {
-        return ((rate_per_second < 0) != (dt_ns < 0)) ? kMin : kMax;
-    }
-    const bool negative = (rate_per_second < 0) != (dt_ns < 0);
-    const auto magnitude_rate =
-        static_cast<std::uint64_t>(rate_per_second < 0 ? -rate_per_second : rate_per_second);
-    const auto magnitude_dt = static_cast<std::uint64_t>(dt_ns < 0 ? -dt_ns : dt_ns);
-    const auto whole = magnitude_rate / static_cast<std::uint64_t>(kNanosecondsPerSecond);
-    const auto remainder = magnitude_rate % static_cast<std::uint64_t>(kNanosecondsPerSecond);
-    const auto high = whole * magnitude_dt;
-    const auto low = (remainder * magnitude_dt) / static_cast<std::uint64_t>(kNanosecondsPerSecond);
-    const auto sum = high + low;
-    const auto limit = static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
-    if (sum > limit) {
-        return negative ? std::numeric_limits<std::int64_t>::min()
-                        : std::numeric_limits<std::int64_t>::max();
-    }
-    const auto magnitude = static_cast<std::int64_t>(sum);
-    return negative ? -magnitude : magnitude;
+    const Wide product = static_cast<Wide>(rate_per_second) * static_cast<Wide>(dt_ns);
+    const Wide quotient = product / static_cast<Wide>(kNanosecondsPerSecond);
+    return saturating_narrow(quotient);
 }
 
 [[nodiscard]] std::int64_t add_saturated(std::int64_t base, std::int64_t delta) noexcept {
-    if (delta > 0 && base > std::numeric_limits<std::int64_t>::max() - delta) {
-        return std::numeric_limits<std::int64_t>::max();
-    }
-    if (delta < 0 && base < std::numeric_limits<std::int64_t>::min() - delta) {
-        return std::numeric_limits<std::int64_t>::min();
-    }
-    return base + delta;
+    const Wide sum = static_cast<Wide>(base) + static_cast<Wide>(delta);
+    return saturating_narrow(sum);
 }
 
 } // namespace
@@ -87,11 +86,12 @@ SpacecraftModel<C>::state_now() const {
     if (sample.status != core::ClockStatus::Ok) {
         return std::nullopt;
     }
+    if (sample.time < truth_.epoch) {
+        return std::nullopt;
+    }
     core::Duration elapsed{0};
-    if (sample.time >= truth_.epoch) {
-        if (!core::checked_time_between(sample.time, truth_.epoch, elapsed)) {
-            return std::nullopt;
-        }
+    if (!core::checked_time_between(sample.time, truth_.epoch, elapsed)) {
+        return std::nullopt;
     }
     const auto dt = elapsed.count();
     hardware::SpacecraftState<time_point> state;

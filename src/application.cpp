@@ -7,6 +7,7 @@
 #include "ares/flight/example_tasks.hpp"
 #include "ares/flight/executive.hpp"
 #include "ares/flight/power_manager.hpp"
+#include "ares/flight/sample_limits.hpp"
 #include "ares/flight/thermal_monitor.hpp"
 #include "ares/launch_options.hpp"
 #include "ares/simulation/sensors.hpp"
@@ -40,8 +41,12 @@ struct MissionRuntime {
     explicit MissionRuntime(std::ostream& out)
         : logger_(out, clock_), spacecraft_(clock_), imu_(spacecraft_), gps_(spacecraft_),
           battery_(spacecraft_), temperature_(spacecraft_), executive_(clock_, logger_, events_),
-          health_(logger_), navigation_(logger_, imu_, gps_), comms_(logger_), power_(battery_),
-          thermal_(temperature_), supervisor_(clock_) {
+          health_(logger_),
+          navigation_(logger_, imu_, gps_, clock_,
+                      flight::NavigationAgeLimits{flight::limits::kNavigationImuMaxAge,
+                                                  flight::limits::kNavigationGpsMaxAge}),
+          comms_(logger_), power_(battery_, clock_, flight::limits::kPowerMaxAge),
+          thermal_(temperature_, clock_, flight::limits::kThermalMaxAge), supervisor_(clock_) {
         spacecraft_.set_epoch_now();
     }
 
@@ -59,8 +64,8 @@ struct MissionRuntime {
     flight::HealthPulse<core::SteadyClock> health_;
     flight::NavigationCadence<core::SteadyClock> navigation_;
     flight::CommBeacon<core::SteadyClock> comms_;
-    flight::PowerManager<core::SteadyClock::time_point> power_;
-    flight::ThermalMonitor<core::SteadyClock::time_point> thermal_;
+    flight::PowerManager<core::SteadyClock> power_;
+    flight::ThermalMonitor<core::SteadyClock> thermal_;
     core::TaskSupervisor<core::SteadyClock> supervisor_;
 };
 
@@ -144,9 +149,8 @@ int run(int argc, char** argv, InjectedFault fault) {
     if (runtime.supervisor_.add(
             flight::HealthPulse<Steady>::name, health_timing,
             [&runtime](Steady::time_point scheduled, std::stop_token stop) {
-                (void)runtime.power_.sample();
-                (void)runtime.thermal_.sample();
-                runtime.health_(scheduled, stop);
+                flight::run_health_cycle(runtime.power_, runtime.thermal_, runtime.health_,
+                                         scheduled, stop);
             },
             hooks) != core::AddStatus::Ok) {
         return to_int(ExitCode::StartupFailed);

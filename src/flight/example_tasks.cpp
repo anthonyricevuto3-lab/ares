@@ -57,8 +57,14 @@ void HealthPulse<C>::operator()(typename C::time_point scheduled, std::stop_toke
 
 template <core::Clock C>
 void NavigationCadence<C>::operator()(typename C::time_point scheduled, std::stop_token stop) {
-    if (!stop.stop_requested() && imu_ != nullptr && gps_ != nullptr) {
-        solution_ = combine_navigation(imu_->read(), gps_->read());
+    if (!stop.stop_requested() && imu_ != nullptr && gps_ != nullptr && clock_ != nullptr) {
+        const auto imu = imu_->read();
+        const auto gps = gps_->read();
+        const core::ClockSample<time_point> now = clock_->now();
+        solution_ = combine_navigation(imu, gps, now.status, now.time, limits_);
+        if (solution_.usability == SampleUsability::Usable) {
+            last_usable_ = solution_;
+        }
     }
     record_cycle(cycles_, debug_formats_, logger_, name, action, scheduled, stop);
 }

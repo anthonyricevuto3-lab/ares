@@ -8,7 +8,8 @@
 namespace ares::simulation {
 
 // Constant-rate truth model. Position and attitude integrate from the epoch
-// using the injected clock. There is no orbital propagator and no noise.
+// using the injected clock. A clock reading earlier than the epoch is not a
+// state. There is no orbital propagator and no noise.
 template <core::Clock C> struct SimulationTruth {
     using time_point = typename C::time_point;
     time_point epoch{};
