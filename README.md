@@ -32,6 +32,8 @@ It models embedded-style resource limits and still runs on a developer workstati
 
 The ten-minute walkthrough is [docs/DEMO.md](docs/DEMO.md). Milestone notes are [docs/RELEASE_NOTES.md](docs/RELEASE_NOTES.md).
 
+Selected NASA software-engineering and software-assurance practices, with project-specific tailoring, are recorded under [docs/assurance/SOFTWARE_ASSURANCE_PLAN.md](docs/assurance/SOFTWARE_ASSURANCE_PLAN.md). That record is not NASA certification, NASA approval, or flight qualification.
+
 ## Architecture
 
 Simulation changes what a device returns or how long a task appears to have run. Flight software reads hardware interfaces. The health task is the only writer of fault and recovery state. The recorder watches. It does not steer.
