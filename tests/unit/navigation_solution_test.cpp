@@ -1,4 +1,4 @@
-#include "ares/flight/example_tasks.hpp"
+#include "ares/flight/flight_tasks.hpp"
 #include "ares/flight/navigation.hpp"
 #include "ares/hardware/interfaces.hpp"
 

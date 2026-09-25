@@ -1,6 +1,6 @@
 # ARES software requirements
 
-These requirements are owned by ARES. They describe the frozen 1.0.0 simulator. They are not NASA requirements. Each statement is written so a test can fail it. Thresholds match `include/ares/flight/fdir_limits.hpp` and are not changed by this branch.
+These requirements are owned by ARES. They describe the frozen 1.0.0 simulator. They are not NASA requirements. Each statement is written so a test can fail it. Thresholds match `include/ares/flight/fdir_limits.hpp`. The post-release assurance assessment did not change them.
 
 Higher-level labels below are assurance-derived. They are not identifiers in `docs/PRODUCT_SPEC.md`. They name goals that document already states.
 

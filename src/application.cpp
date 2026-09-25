@@ -4,7 +4,7 @@
 #include "ares/core/event_log.hpp"
 #include "ares/core/logger.hpp"
 #include "ares/core/task_supervisor.hpp"
-#include "ares/flight/example_tasks.hpp"
+#include "ares/flight/flight_tasks.hpp"
 #include "ares/flight/executive.hpp"
 #include "ares/flight/fdir.hpp"
 #include "ares/flight/freshness.hpp"

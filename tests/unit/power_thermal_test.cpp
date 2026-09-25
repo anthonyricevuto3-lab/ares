@@ -1,5 +1,5 @@
 #include "ares/core/clock.hpp"
-#include "ares/flight/example_tasks.hpp"
+#include "ares/flight/flight_tasks.hpp"
 #include "ares/flight/power_manager.hpp"
 #include "ares/flight/thermal_monitor.hpp"
 #include "ares/hardware/interfaces.hpp"
