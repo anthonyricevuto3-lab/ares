@@ -1,7 +1,9 @@
 #include "ares/application.hpp"
 #include "ares/core/logger.hpp"
 #include "ares/flight/example_tasks.hpp"
+#include "ares/core/task_supervisor.hpp"
 #include "ares/flight/fdir.hpp"
+#include "ares/flight/freshness.hpp"
 #include "ares/flight/power_manager.hpp"
 #include "ares/flight/sample_limits.hpp"
 #include "ares/flight/thermal_monitor.hpp"
@@ -35,7 +37,7 @@ struct Mark {
     flight::SpacecraftMode from{flight::SpacecraftMode::Boot};
     flight::SpacecraftMode to{flight::SpacecraftMode::Boot};
     flight::FaultType type{flight::FaultType::SensorStale};
-    flight::FaultSource source{flight::FaultSource::Gps};
+    flight::FaultSource source{flight::FaultSource::PrimaryGps};
     Time time{};
 
     bool operator==(const Mark&) const = default;
@@ -63,6 +65,9 @@ struct Campaign {
     simulation::SpacecraftModel<Clock> model;
     simulation::SimulatedImu<Clock> imu;
     simulation::SimulatedGps<Clock> gps;
+    simulation::SimulatedGps<Clock> backup_gps;
+    flight::GpsSelector<Clock> selector;
+    ares::core::NavigationRestart navigation_restart{};
     simulation::SimulatedBatteryMonitor<Clock> battery;
     simulation::SimulatedTemperatureSensor<Clock> temperature;
     flight::FlightExecutive<Clock> executive;
@@ -81,11 +86,14 @@ struct Campaign {
 
     explicit Campaign(const simulation::NamedScenario& scenario)
         : logger(out, clock), model(clock), imu(model, {}, &chaos), gps(model, {}, &chaos),
-          battery(model, {}, &chaos), temperature(model), executive(clock, logger, events),
-          health(logger),
-          navigation(logger, imu, gps, clock,
+          backup_gps(model, {}, &chaos, simulation::SensorStream::BackupGps,
+                     simulation::ChaosTarget::BackupGps),
+          selector(gps, backup_gps), battery(model, {}, &chaos), temperature(model),
+          executive(clock, logger, events), health(logger),
+          navigation(logger, imu, selector, clock,
                      flight::NavigationAgeLimits{flight::limits::kNavigationImuMaxAge,
-                                                 flight::limits::kNavigationGpsMaxAge}),
+                                                 flight::limits::kNavigationGpsMaxAge},
+                     &navigation_restart.generation),
           comms(logger), power(battery, clock, flight::limits::kPowerMaxAge),
           thermal(temperature, clock, flight::limits::kThermalMaxAge), fdir(events) {
         simulation::SimulationTruth<Clock> truth;
@@ -105,7 +113,11 @@ struct Campaign {
                 [this](const ares::core::TaskCycleEvent<Time>& event) {
                     if (const std::optional<flight::FaultSource> source =
                             source_for(event.id.text())) {
-                        mailbox.publish_deadline(*source, event.deadline_missed);
+                        const std::uint32_t generation =
+                            *source == flight::FaultSource::NavigationTask
+                                ? navigation_restart.generation.load(std::memory_order_acquire)
+                                : 0U;
+                        mailbox.publish_deadline(*source, event.deadline_missed, generation);
                     }
                 },
                 {},
@@ -122,10 +134,21 @@ struct Campaign {
             [this](Time scheduled, std::stop_token stop) {
                 navigation(scheduled, stop);
                 if (!stop.stop_requested()) {
+                    const ares::core::ClockSample<Time> now = clock.now();
                     mailbox.publish_sensor(flight::FaultSource::Imu,
                                            navigation.solution().imu_usability);
-                    mailbox.publish_sensor(flight::FaultSource::Gps,
-                                           navigation.solution().gps_usability);
+                    if (now.status == ares::core::ClockStatus::Ok) {
+                        mailbox.publish_sensor(
+                            flight::FaultSource::PrimaryGps,
+                            flight::evaluate_freshness(navigation.primary_gps().status,
+                                                       navigation.primary_gps().time, now.time,
+                                                       flight::limits::kNavigationGpsMaxAge));
+                        mailbox.publish_sensor(
+                            flight::FaultSource::BackupGps,
+                            flight::evaluate_freshness(navigation.backup_gps().status,
+                                                       navigation.backup_gps().time, now.time,
+                                                       flight::limits::kNavigationGpsMaxAge));
+                    }
                 }
                 navigation_execution.extra =
                     chaos.execution_delay(simulation::ChaosTarget::NavigationTask, scheduled);
@@ -144,7 +167,21 @@ struct Campaign {
                 }
                 mailbox.publish_sensor(flight::FaultSource::Temperature, thermal.usability());
                 mailbox.publish_battery(power.usability(), power.latest_observation().voltage);
-                (void)flight::run_fdir_cycle(fdir, mailbox, executive, clock.now(), stop);
+                const bool primary_selected = selector.selection() == flight::GpsSelection::Primary;
+                (void)flight::run_fdir_cycle(
+                    fdir, mailbox, executive, clock.now(), stop,
+                    navigation_restart.generation.load(std::memory_order_acquire),
+                    primary_selected);
+                if (stop.stop_requested()) {
+                    return;
+                }
+                const flight::RecoveryCommand command = fdir.last_recovery_command();
+                if (command.restart_navigation) {
+                    (void)navigation_restart.request();
+                }
+                if (command.failover_to_backup) {
+                    selector.failover_to_backup();
+                }
             },
             clock, make_hooks());
         comms_task.emplace(
@@ -168,6 +205,10 @@ struct Campaign {
     void poll_ready() {
         for (int guard = 0; guard < 8; ++guard) {
             const ares::core::PollResult navigation_result = navigation_task->poll();
+            if (navigation_result == ares::core::PollResult::Ran ||
+                navigation_result == ares::core::PollResult::Waiting) {
+                (void)navigation_restart.handoff(*navigation_task, clock, {});
+            }
             const ares::core::PollResult health_result = health_task->poll();
             const ares::core::PollResult comms_result = comms_task->poll();
             if (navigation_result != ares::core::PollResult::Ran &&
@@ -235,14 +276,14 @@ TEST(ChaosCampaign, GpsStaleDegradesThenReturnsToNominal) {
     campaign.run_for(10s);
     const std::vector<Mark> marks = campaign.trace();
     EXPECT_TRUE(saw_fault(marks, Mark::Kind::Activated, flight::FaultType::SensorStale,
-                          flight::FaultSource::Gps));
+                          flight::FaultSource::PrimaryGps));
     EXPECT_TRUE(saw_mode(marks, flight::SpacecraftMode::Nominal, flight::SpacecraftMode::Degraded));
     EXPECT_TRUE(saw_fault(marks, Mark::Kind::Cleared, flight::FaultType::SensorStale,
-                          flight::FaultSource::Gps));
+                          flight::FaultSource::PrimaryGps));
     EXPECT_TRUE(saw_mode(marks, flight::SpacecraftMode::Degraded, flight::SpacecraftMode::Nominal));
     EXPECT_EQ(campaign.executive.mode(), flight::SpacecraftMode::Nominal);
-    const flight::FaultRecord<Time>* stale =
-        campaign.fdir.registry().find(flight::FaultType::SensorStale, flight::FaultSource::Gps);
+    const flight::FaultRecord<Time>* stale = campaign.fdir.registry().find(
+        flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps);
     ASSERT_NE(stale, nullptr);
     EXPECT_FALSE(stale->active);
 }
@@ -323,10 +364,11 @@ TEST(ChaosCampaign, DeadlineStormEscalatesThroughTheMonitor) {
 TEST(ChaosCampaign, MixedFaultsKeepSafeModeUntilBothRecover) {
     Campaign campaign(*simulation::find_scenario("mixed_faults"));
     campaign.run_for(8s);
-    EXPECT_EQ(campaign.executive.mode(), flight::SpacecraftMode::SafeMode);
-    EXPECT_EQ(campaign.fdir.safe_recovery_streak(), 0U);
-    const flight::FaultRecord<Time>* stale =
-        campaign.fdir.registry().find(flight::FaultType::SensorStale, flight::FaultSource::Gps);
+    // Backup is verified, so the still-active primary warning does not hold SafeMode.
+    EXPECT_EQ(campaign.executive.mode(), flight::SpacecraftMode::Standby);
+    EXPECT_EQ(campaign.fdir.recovery().gps_state(), flight::RecoveryState::Succeeded);
+    const flight::FaultRecord<Time>* stale = campaign.fdir.registry().find(
+        flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps);
     ASSERT_NE(stale, nullptr);
     EXPECT_TRUE(stale->active);
     EXPECT_GE(stale->consecutive_count, 3U);
@@ -340,7 +382,7 @@ TEST(ChaosCampaign, MixedFaultsKeepSafeModeUntilBothRecover) {
     EXPECT_FALSE(saw_mode(campaign.trace(), flight::SpacecraftMode::SafeMode,
                           flight::SpacecraftMode::Nominal));
     EXPECT_FALSE(campaign.fdir.registry()
-                     .find(flight::FaultType::SensorStale, flight::FaultSource::Gps)
+                     .find(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps)
                      ->active);
 }
 
@@ -361,4 +403,90 @@ TEST(ChaosCampaign, UnknownScenarioNameIsRejected) {
     char value[] = "1";
     char* argv[] = {program, flag, name, duration, value};
     EXPECT_EQ(ares::run(5, argv), ares::to_int(ares::ExitCode::UsageError));
+}
+
+std::size_t count_recovery(const Campaign& campaign) {
+    std::size_t count = 0;
+    for (const flight::SystemEvent<Time>& event : campaign.events.snapshot()) {
+        if (std::holds_alternative<flight::RecoveryEvent<Time>>(event)) {
+            ++count;
+        }
+    }
+    return count;
+}
+
+TEST(ChaosCampaign, PrimaryFreezeFailsOverToBackup) {
+    Campaign campaign(*simulation::find_scenario("gps_stale"));
+    campaign.run_for(12s);
+    EXPECT_EQ(campaign.selector.selection(), flight::GpsSelection::Backup);
+    EXPECT_EQ(campaign.fdir.recovery().gps_state(), flight::RecoveryState::Succeeded);
+    EXPECT_TRUE(campaign.fdir.recovery().primary_isolated());
+    EXPECT_EQ(campaign.navigation.solution().position.x,
+              campaign.navigation.backup_gps().position.x);
+    const flight::FaultRecord<Time>* primary = campaign.fdir.registry().find(
+        flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps);
+    ASSERT_NE(primary, nullptr);
+    EXPECT_GE(count_recovery(campaign), 2U);
+}
+
+TEST(ChaosCampaign, HeldNavigationDelayFailsBothRestartAttempts) {
+    const simulation::ChaosEvent delay{simulation::InjectionKind::TaskExecutionDelay,
+                                       simulation::ChaosTarget::NavigationTask,
+                                       1s,
+                                       30s,
+                                       150000000,
+                                       0};
+    const simulation::NamedScenario scenario{"restart-fail", &delay, 1, 0};
+    Campaign campaign(scenario);
+    campaign.run_for(20s);
+    EXPECT_EQ(campaign.fdir.recovery().navigation_state(), flight::RecoveryState::Failed);
+    EXPECT_EQ(campaign.fdir.recovery().navigation_attempts(), 2);
+    EXPECT_EQ(campaign.navigation_restart.generation.load(), 2U);
+    EXPECT_EQ(campaign.executive.mode(), flight::SpacecraftMode::SafeMode);
+    EXPECT_EQ(count_recovery(campaign), 3U);
+}
+
+TEST(ChaosCampaign, NavigationDelayRestartsThenVerifies) {
+    Campaign campaign(*simulation::find_scenario("deadline_storm"));
+    campaign.run_for(12s);
+    EXPECT_GE(campaign.navigation_restart.generation.load(), 1U);
+    EXPECT_LE(campaign.navigation_restart.generation.load(), 2U);
+    EXPECT_GE(count_recovery(campaign), 2U);
+    EXPECT_EQ(campaign.executive.mode(), flight::SpacecraftMode::Standby);
+    EXPECT_FALSE(campaign.fdir.registry()
+                     .find(flight::FaultType::DeadlineMiss, flight::FaultSource::NavigationTask)
+                     ->active);
+}
+
+TEST(ChaosCampaign, DualGpsFailureEmitsOneTerminalFailure) {
+    const simulation::ChaosEvent events[] = {
+        {simulation::InjectionKind::SensorFreeze, simulation::ChaosTarget::Gps, 1s, 20s, 0, 0},
+        {simulation::InjectionKind::SensorUnavailable, simulation::ChaosTarget::BackupGps, 1s, 20s,
+         0, 0},
+    };
+    const simulation::NamedScenario scenario{"dual-gps", events, 2, 0};
+    Campaign campaign(scenario);
+    campaign.run_for(8s);
+    EXPECT_EQ(campaign.selector.selection(), flight::GpsSelection::Backup);
+    EXPECT_EQ(campaign.fdir.recovery().gps_state(), flight::RecoveryState::Failed);
+    EXPECT_EQ(campaign.fdir.recovery().gps_attempts(), 1);
+    EXPECT_EQ(count_recovery(campaign), 2U);
+    EXPECT_NE(campaign.executive.mode(), flight::SpacecraftMode::Nominal);
+    EXPECT_TRUE(campaign.fdir.recovery().primary_isolated());
+}
+
+TEST(ChaosCampaign, TaskAndGpsRecoveryStayIndependent) {
+    const simulation::ChaosEvent events[] = {
+        {simulation::InjectionKind::TaskExecutionDelay, simulation::ChaosTarget::NavigationTask, 1s,
+         3s, 150000000, 0},
+        {simulation::InjectionKind::SensorFreeze, simulation::ChaosTarget::PrimaryGps, 1s, 6s, 0,
+         0},
+    };
+    const simulation::NamedScenario scenario{"both", events, 2, 0};
+    Campaign campaign(scenario);
+    campaign.run_for(12s);
+    EXPECT_GE(campaign.navigation_restart.generation.load(), 1U);
+    EXPECT_EQ(campaign.fdir.recovery().gps_state(), flight::RecoveryState::Succeeded);
+    EXPECT_EQ(campaign.selector.selection(), flight::GpsSelection::Backup);
+    EXPECT_EQ(campaign.fdir.recovery().gps_attempts(), 1);
 }

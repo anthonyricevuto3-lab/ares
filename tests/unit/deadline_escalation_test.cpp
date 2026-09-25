@@ -202,15 +202,15 @@ TEST(DeadlineEscalation, DeadlineWarningPlusSensorWarningStaysDegraded) {
     harness.reach_nominal();
     for (int sample = 0; sample < 3; ++sample) {
         ASSERT_EQ(harness.clock.advance(1s), ares::core::AdvanceStatus::Applied);
-        (void)harness.fdir.observe_sensor(flight::FaultSource::Gps, flight::SampleUsability::Stale,
-                                          harness.stamp());
+        (void)harness.fdir.observe_sensor(flight::FaultSource::PrimaryGps,
+                                          flight::SampleUsability::Stale, harness.stamp());
         (void)harness.miss(flight::FaultSource::NavigationTask);
     }
     EXPECT_EQ(harness.executive.mode(), flight::SpacecraftMode::Degraded);
     EXPECT_EQ(harness.deadline(flight::FaultSource::NavigationTask)->severity,
               flight::FaultSeverity::Warning);
     EXPECT_EQ(harness.fdir.registry()
-                  .find(flight::FaultType::SensorStale, flight::FaultSource::Gps)
+                  .find(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps)
                   ->consecutive_count,
               3U);
 }
@@ -219,8 +219,8 @@ TEST(DeadlineEscalation, DeadlineCriticalDominatesSensorWarning) {
     Harness harness;
     harness.reach_nominal();
     for (int sample = 0; sample < 3; ++sample) {
-        (void)harness.fdir.observe_sensor(flight::FaultSource::Gps, flight::SampleUsability::Stale,
-                                          harness.stamp());
+        (void)harness.fdir.observe_sensor(flight::FaultSource::PrimaryGps,
+                                          flight::SampleUsability::Stale, harness.stamp());
     }
     for (int sample = 0; sample < 5; ++sample) {
         (void)harness.miss(flight::FaultSource::NavigationTask);

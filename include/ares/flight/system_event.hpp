@@ -13,6 +13,7 @@ namespace ares::flight {
 template <typename TimePoint>
 using SystemEvent = std::variant<ModeChangedEvent<TimePoint>, ModeTransitionRejected<TimePoint>,
                                  CommandEvent<TimePoint>, FaultActivatedEvent<TimePoint>,
-                                 FaultUpdatedEvent<TimePoint>, FaultClearedEvent<TimePoint>>;
+                                 FaultUpdatedEvent<TimePoint>, FaultClearedEvent<TimePoint>,
+                                 RecoveryEvent<TimePoint>>;
 
 } // namespace ares::flight

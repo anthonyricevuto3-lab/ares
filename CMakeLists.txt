@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(ARES
-    VERSION 0.4.0
+    VERSION 0.5.0
     DESCRIPTION "Autonomous Resilient Embedded Spacecraft System"
     LANGUAGES CXX
 )
@@ -148,6 +148,9 @@ if(BUILD_TESTING)
         tests/unit/fault_window_test.cpp
         tests/unit/deadline_escalation_test.cpp
         tests/unit/chaos_engine_test.cpp
+        tests/unit/recovery_manager_test.cpp
+        tests/unit/gps_selector_test.cpp
+        tests/integration/task_restart_test.cpp
         tests/unit/sensor_injection_test.cpp
         tests/integration/simulated_spacecraft_test.cpp
         tests/integration/fdir_scenario_test.cpp

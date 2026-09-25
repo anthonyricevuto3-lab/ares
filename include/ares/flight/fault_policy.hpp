@@ -40,7 +40,8 @@ struct PolicyDecision {
 // faults and shorter warnings do not block.
 template <typename TimePoint, std::size_t Capacity>
 [[nodiscard]] bool safe_mode_exit_blocked(const FaultRegistry<TimePoint, Capacity>& registry,
-                                          FaultPolicyLimits limits) noexcept {
+                                          FaultPolicyLimits limits,
+                                          bool suppress_isolated_primary = false) noexcept {
     if (registry.saturated()) {
         return true;
     }
@@ -48,6 +49,10 @@ template <typename TimePoint, std::size_t Capacity>
         limits.warning_consecutive == 0 ? 1U : limits.warning_consecutive;
     bool blocked = false;
     registry.for_each_active([&](const FaultRecord<TimePoint>& fault) {
+        if (suppress_isolated_primary && fault.source == FaultSource::PrimaryGps &&
+            is_sensor_health(fault.type)) {
+            return;
+        }
         if (fault.severity == FaultSeverity::Critical) {
             blocked = true;
         }
@@ -61,13 +66,17 @@ template <typename TimePoint, std::size_t Capacity>
 template <typename TimePoint, std::size_t Capacity>
 [[nodiscard]] PolicyDecision
 evaluate_fault_policy(const FaultRegistry<TimePoint, Capacity>& registry, SpacecraftMode current,
-                      FaultPolicyLimits limits) noexcept {
+                      FaultPolicyLimits limits, bool suppress_isolated_primary = false) noexcept {
     const std::uint32_t required =
         limits.warning_consecutive == 0 ? 1U : limits.warning_consecutive;
 
     bool critical = registry.saturated();
     bool persistent_warning = false;
     registry.for_each_active([&](const FaultRecord<TimePoint>& fault) {
+        if (suppress_isolated_primary && fault.source == FaultSource::PrimaryGps &&
+            is_sensor_health(fault.type)) {
+            return;
+        }
         if (fault.severity == FaultSeverity::Critical) {
             critical = true;
         }

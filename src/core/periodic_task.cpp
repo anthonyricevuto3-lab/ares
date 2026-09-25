@@ -54,6 +54,14 @@ template <Clock C> void PeriodicTask<C>::disarm() noexcept {
     armed_ = false;
 }
 
+template <Clock C> void PeriodicTask<C>::prepare_restart() noexcept {
+    armed_ = false;
+    record_ = {};
+    if (note_ != nullptr) {
+        note_->extra = Duration::zero();
+    }
+}
+
 template <Clock C> PollResult PeriodicTask<C>::poll(std::stop_token stop) {
     if (in_poll_) {
         return PollResult::Reentrant;

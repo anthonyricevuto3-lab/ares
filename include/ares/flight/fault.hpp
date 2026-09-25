@@ -21,7 +21,8 @@ enum class FaultSeverity : std::uint8_t { Advisory, Warning, Critical };
 // Primary identity. Comparisons are enumerators, not names.
 enum class FaultSource : std::uint8_t {
     Imu,
-    Gps,
+    PrimaryGps,
+    BackupGps,
     Battery,
     Temperature,
     NavigationTask,
@@ -51,10 +52,24 @@ inline constexpr std::array<FaultType, 3> kSensorHealthFaults{
     FaultType::SensorStale,
 };
 
+[[nodiscard]] constexpr bool is_sensor_health(FaultType type) noexcept {
+    switch (type) {
+    case FaultType::SensorUnavailable:
+    case FaultType::SensorInvalid:
+    case FaultType::SensorStale:
+        return true;
+    case FaultType::DeadlineMiss:
+    case FaultType::LowBattery:
+        return false;
+    }
+    return false;
+}
+
 [[nodiscard]] constexpr bool is_sensor_source(FaultSource source) noexcept {
     switch (source) {
     case FaultSource::Imu:
-    case FaultSource::Gps:
+    case FaultSource::PrimaryGps:
+    case FaultSource::BackupGps:
     case FaultSource::Battery:
     case FaultSource::Temperature:
         return true;
@@ -73,7 +88,8 @@ inline constexpr std::array<FaultType, 3> kSensorHealthFaults{
     case FaultSource::CommunicationsTask:
         return true;
     case FaultSource::Imu:
-    case FaultSource::Gps:
+    case FaultSource::PrimaryGps:
+    case FaultSource::BackupGps:
     case FaultSource::Battery:
     case FaultSource::Temperature:
         return false;
@@ -128,8 +144,10 @@ inline constexpr std::array<FaultType, 3> kSensorHealthFaults{
     switch (source) {
     case FaultSource::Imu:
         return "imu";
-    case FaultSource::Gps:
-        return "gps";
+    case FaultSource::PrimaryGps:
+        return "primary-gps";
+    case FaultSource::BackupGps:
+        return "backup-gps";
     case FaultSource::Battery:
         return "battery";
     case FaultSource::Temperature:

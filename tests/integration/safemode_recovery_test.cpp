@@ -111,8 +111,8 @@ TEST(SafeModeRecovery, PersistentWarningBlocksStandby) {
     Harness harness;
     harness.reach_nominal();
     for (int sample = 0; sample < 3; ++sample) {
-        (void)harness.fdir.observe_sensor(flight::FaultSource::Gps, flight::SampleUsability::Stale,
-                                          harness.stamp());
+        (void)harness.fdir.observe_sensor(flight::FaultSource::PrimaryGps,
+                                          flight::SampleUsability::Stale, harness.stamp());
     }
     ASSERT_EQ(harness.fdir
                   .observe_battery(flight::SampleUsability::Usable, hardware::Millivolts{10999},
@@ -257,8 +257,8 @@ TEST(SafeModeRecovery, ShortWarningDoesNotBlockStandby) {
     Harness harness;
     harness.enter_safe_on_battery();
     harness.clear_battery();
-    ASSERT_EQ(harness.fdir.observe_sensor(flight::FaultSource::Gps, flight::SampleUsability::Stale,
-                                          harness.stamp()),
+    ASSERT_EQ(harness.fdir.observe_sensor(flight::FaultSource::PrimaryGps,
+                                          flight::SampleUsability::Stale, harness.stamp()),
               flight::RegistryStatus::Activated);
 
     (void)harness.fdir.apply(harness.executive);

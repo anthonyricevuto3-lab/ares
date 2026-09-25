@@ -9,8 +9,9 @@
 namespace ares::core {
 
 template <Clock C>
-TaskSupervisor<C>::TaskSupervisor(C& clock, LaunchProbe launch_probe)
-    : clock_(clock), launch_probe_(launch_probe) {}
+TaskSupervisor<C>::TaskSupervisor(C& clock, LaunchProbe launch_probe, NavigationRestart* restart)
+    : clock_(clock), launch_probe_(launch_probe), restart_(restart == nullptr ? &owned_ : restart) {
+}
 
 template <Clock C> TaskSupervisor<C>::~TaskSupervisor() {
     try {
@@ -37,6 +38,9 @@ AddStatus TaskSupervisor<C>::add(std::string_view name, TaskTiming timing, TaskW
     slot.emplace(*id, timing, std::move(work), clock_, std::move(hooks));
     if (execution != nullptr) {
         slot->task.bind_simulated_execution(execution);
+    }
+    if (name == "navigation") {
+        navigation_index_ = count_;
     }
     ++count_;
     return AddStatus::Ok;
@@ -104,8 +108,10 @@ template <Clock C> StartStatus TaskSupervisor<C>::start() {
             engaged.fault.store(static_cast<std::uint8_t>(WorkerFault::None),
                                 std::memory_order_relaxed);
             Worker* const worker = &engaged;
-            worker->thread =
-                std::jthread([this, worker](std::stop_token stop) { thread_main(*worker, stop); });
+            const bool navigation = index == navigation_index_;
+            worker->thread = std::jthread([this, worker, navigation](std::stop_token stop) {
+                thread_main(*worker, stop, navigation);
+            });
             ++launched;
         }
     } catch (...) {
@@ -236,7 +242,8 @@ template <Clock C> void TaskSupervisor<C>::note_fault(Worker& worker, WorkerFaul
     request_stop();
 }
 
-template <Clock C> void TaskSupervisor<C>::thread_main(Worker& worker, std::stop_token stop) {
+template <Clock C>
+void TaskSupervisor<C>::thread_main(Worker& worker, std::stop_token stop, bool navigation) {
     struct MarkStopped {
         std::atomic<std::size_t>& counter;
         std::atomic<WorkerPhase>& phase;
@@ -275,6 +282,18 @@ template <Clock C> void TaskSupervisor<C>::thread_main(Worker& worker, std::stop
             }
             worker.phase.store(WorkerPhase::InWork, std::memory_order_release);
             const PollResult result = worker.task.poll(stop);
+            if (navigation && (result == PollResult::Ran || result == PollResult::Waiting)) {
+                const std::uint32_t current = restart_->generation.load(std::memory_order_acquire);
+                const bool pending =
+                    current != std::numeric_limits<std::uint32_t>::max() &&
+                    restart_->target.load(std::memory_order_acquire) == current + 1U;
+                if (pending && !restart_->handoff(worker.task, clock_, stop)) {
+                    if (!stop.stop_requested() && !shutdown_.stop_requested()) {
+                        note_fault(worker, WorkerFault::Schedule);
+                    }
+                    break;
+                }
+            }
             if (result == PollResult::ScheduleError) {
                 note_fault(worker, WorkerFault::Schedule);
                 break;

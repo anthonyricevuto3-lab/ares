@@ -8,7 +8,7 @@ A logical fault is the pair `(FaultType, FaultSource)`. Both are enumerators. Th
 
 Fault types: `SensorUnavailable`, `SensorInvalid`, `SensorStale`, `DeadlineMiss`, `LowBattery`.
 
-Sources: `Imu`, `Gps`, `Battery`, `Temperature`, `NavigationTask`, `HealthTask`, `CommunicationsTask`.
+Sources: `Imu`, `PrimaryGps`, `BackupGps`, `Battery`, `Temperature`, `NavigationTask`, `HealthTask`, `CommunicationsTask`.
 
 Severity is fixed by type:
 
@@ -28,7 +28,7 @@ Clearing sets the record inactive and zeroes the consecutive count. First detect
 
 ## Registry
 
-`FaultRegistry` is a fixed array. The flight size is 16, which is every sensor-health pair, every task deadline, and `LowBattery`. It does not grow, and it is not thread-safe. The health task is the only writer.
+`FaultRegistry` is a fixed array. The flight size is 19: five sensor sources times three sensor-health types, three task deadlines, and `LowBattery`. It does not grow, and it is not thread-safe. The health task is the only writer.
 
 A repeated detection updates the existing slot. It does not take a new one.
 
@@ -92,10 +92,12 @@ Recovery actions are `None`, `ContinueDegraded`, `EnterSafeMode`, and `RecoverTo
 
 When no critical condition is present and no warning has reached the persistence count, policy may request `Degraded -> Nominal`. An advisory fault does not block that return. `SafeMode` is left only by the counted Standby recovery above.
 
+Clearing a record is fault health. It is not recovery confidence. GPS has one automatic failover per mission. If backup verification ends in `RecoveryFailed`, later usable samples may clear the GPS records and still leave that recovery state `Failed`. The terminal failure keeps blocking `Degraded -> Nominal` and `SafeMode -> Standby`. Selection stays on backup, and a new automatic GPS episode does not begin. A new mission is required to leave it. A finished navigation episode still returns to idle when its deadline record is inactive. A failed GPS episode does not.
+
 ## Events
 
 `FaultActivated` is published when a record becomes active, including reactivation. `FaultCleared` is published when it becomes inactive. `FaultUpdated` is published once when an active warning's consecutive count reaches the persistence limit, and when a `DeadlineMiss` record changes severity. Later repeats in the same severity are not events. The registry remains the authoritative state. Mode changes still publish the existing `ModeChangedEvent`, including `SafeMode -> Standby`.
 
 ## What this milestone does not do
 
-It does not restart a task, switch to a redundant sensor, roll back a checkpoint, or vote. It does not invent a fault type for a future timestamp or a time error. One mailbox window still does not retain every intermediate non-usable sample. It retains whether `Usable` occurred, and what the newest sample was. SafeMode recovery does not skip `Standby`, and it does not resume the mission.
+v0.5 restarts navigation and fails over GPS, as `docs/RECOVERY.md` describes. It does not roll back a checkpoint or vote. It does not invent a fault type for a future timestamp or a time error. One mailbox window still does not retain every intermediate non-usable sample. It retains whether `Usable` occurred, what the newest sample was, and the final consecutive usable or on-time run used by recovery. SafeMode recovery does not skip `Standby`, and it does not resume the mission. It also waits while a subsystem recovery is still verifying or has failed. A failed GPS recovery keeps that block for the rest of the mission. Clearing the fault records does not end it.

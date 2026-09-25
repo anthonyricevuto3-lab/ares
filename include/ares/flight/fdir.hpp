@@ -7,6 +7,7 @@
 #include "ares/flight/fault_events.hpp"
 #include "ares/flight/fault_mailbox.hpp"
 #include "ares/flight/fault_policy.hpp"
+#include "ares/flight/recovery.hpp"
 #include "ares/flight/system_event.hpp"
 
 #include <cstdint>
@@ -87,7 +88,8 @@ public:
     // on their own and raise nothing after a Usable clear.
     void ingest(const typename FaultMailbox<C>::Snapshot& sample, time_point time) {
         ingest_sensor(FaultSource::Imu, sample.imu, time);
-        ingest_sensor(FaultSource::Gps, sample.gps, time);
+        ingest_sensor(FaultSource::PrimaryGps, sample.gps, time);
+        ingest_sensor(FaultSource::BackupGps, sample.backup_gps, time);
         ingest_sensor(FaultSource::Temperature, sample.temperature, time);
         if (sample.battery.pending) {
             (void)observe_battery(sample.battery.usability, sample.battery.voltage, time);
@@ -106,8 +108,44 @@ public:
     }
 
     [[nodiscard]] PolicyDecision evaluate(SpacecraftMode current) const {
-        return evaluate_fault_policy(registry_, current, policy_);
+        return evaluate_fault_policy(registry_, current, policy_,
+                                     recovery_.suppress_primary_warning());
     }
+
+    // Call after ingest and before apply. Health is the only caller.
+    [[nodiscard]] RecoveryCommand advance_recovery(const typename FaultMailbox<C>::Snapshot& sample,
+                                                   std::uint32_t navigation_generation,
+                                                   bool primary_selected, time_point time) {
+        NavigationRecoveryFact navigation;
+        if (const FaultRecord<time_point>* deadline =
+                registry_.find(FaultType::DeadlineMiss, FaultSource::NavigationTask)) {
+            navigation.active = deadline->active;
+            navigation.critical = deadline->active && deadline->severity == FaultSeverity::Critical;
+            navigation.consecutive = deadline->consecutive_count;
+        }
+        navigation.generation = navigation_generation;
+        navigation.observation_pending = sample.navigation.pending;
+        navigation.observation_generation = sample.navigation.generation;
+        navigation.on_time_run = sample.navigation.on_time_run;
+
+        GpsRecoveryFact gps;
+        gps.primary_selected = primary_selected;
+        gps.backup_usable_run = sample.backup_gps.usable_run;
+        gps.backup_unusable_run = sample.backup_gps.unusable_run;
+        const std::uint32_t required =
+            policy_.warning_consecutive == 0 ? 1U : policy_.warning_consecutive;
+        for (const FaultType type : kSensorHealthFaults) {
+            const FaultRecord<time_point>* record = registry_.find(type, FaultSource::PrimaryGps);
+            if (record != nullptr && record->active && record->consecutive_count >= required) {
+                gps.primary_persistent = true;
+            }
+        }
+        last_command_ = recovery_.observe(navigation, gps, time, events_);
+        return last_command_;
+    }
+
+    [[nodiscard]] const RecoveryManager<time_point>& recovery() const noexcept { return recovery_; }
+    [[nodiscard]] RecoveryCommand last_recovery_command() const noexcept { return last_command_; }
 
     // Requests a mode only when policy named one. The returned decision keeps
     // that request and the machine's TransitionStatus as separate fields.
@@ -117,7 +155,15 @@ public:
     [[nodiscard]] PolicyDecision apply(FlightExecutive<C>& executive) {
         const SpacecraftMode current = executive.mode();
         PolicyDecision decision = evaluate(current);
-        consider_safe_recovery(decision, current);
+        if (recovery_.blocks_operational_progress()) {
+            safe_recovery_streak_ = 0;
+            if (decision.requested_mode == SpacecraftMode::Nominal ||
+                decision.requested_mode == SpacecraftMode::Standby) {
+                decision.requested_mode.reset();
+            }
+        } else {
+            consider_safe_recovery(decision, current);
+        }
         if (decision.requested_mode.has_value()) {
             decision.transition = executive.request_mode(*decision.requested_mode);
         }
@@ -182,7 +228,8 @@ private:
     }
 
     void consider_safe_recovery(PolicyDecision& decision, SpacecraftMode mode) {
-        if (mode != SpacecraftMode::SafeMode || safe_mode_exit_blocked(registry_, policy_)) {
+        if (mode != SpacecraftMode::SafeMode ||
+            safe_mode_exit_blocked(registry_, policy_, recovery_.suppress_primary_warning())) {
             safe_recovery_streak_ = 0;
             return;
         }
@@ -248,6 +295,8 @@ private:
     FaultPolicyLimits policy_;
     BatteryThresholds battery_;
     Registry registry_{};
+    RecoveryManager<time_point> recovery_{};
+    RecoveryCommand last_command_{};
     std::uint32_t safe_recovery_streak_{0};
 };
 
@@ -256,14 +305,21 @@ private:
 // request is made. The caller discards that mailbox with the runtime after
 // the workers have been joined.
 template <core::Clock C>
-[[nodiscard]] PolicyDecision run_fdir_cycle(FdirController<C>& controller, FaultMailbox<C>& mailbox,
-                                            FlightExecutive<C>& executive,
-                                            core::ClockSample<typename C::time_point> now,
-                                            std::stop_token stop) {
+[[nodiscard]] PolicyDecision
+run_fdir_cycle(FdirController<C>& controller, FaultMailbox<C>& mailbox,
+               FlightExecutive<C>& executive, core::ClockSample<typename C::time_point> now,
+               std::stop_token stop, std::uint32_t navigation_generation = 0,
+               bool primary_selected = true) {
     if (stop.stop_requested() || now.status != core::ClockStatus::Ok) {
         return {};
     }
-    controller.ingest(mailbox.consume(), now.time);
+    const typename FaultMailbox<C>::Snapshot sample = mailbox.consume();
+    controller.ingest(sample, now.time);
+    const RecoveryCommand command =
+        controller.advance_recovery(sample, navigation_generation, primary_selected, now.time);
+    if (command.failover_to_backup) {
+        mailbox.rebaseline_backup_run();
+    }
     return controller.apply(executive);
 }
 

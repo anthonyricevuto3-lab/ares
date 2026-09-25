@@ -63,6 +63,9 @@ public:
 
     [[nodiscard]] ArmStatus arm(time_point first_release);
     void disarm() noexcept;
+    // Disarm and drop the cycle record and any pending simulated extra.
+    // The worker calls this only after poll has returned.
+    void prepare_restart() noexcept;
     [[nodiscard]] PollResult poll(std::stop_token stop = {});
     void bind_simulated_execution(SimulatedExecution* note) noexcept { note_ = note; }
     [[nodiscard]] time_point next_release() const noexcept;

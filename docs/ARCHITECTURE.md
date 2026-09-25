@@ -137,6 +137,16 @@ A task delay is a `SimulatedExecution` note on that worker. `PeriodicTask` adds 
 
 `ares --scenario NAME` selects a named schedule before workers start. The default is `nominal`. An unknown name exits with a usage error and does not start tasks. `--seed` sets the noise stream. The shipped scenarios use zero noise so an override is the exact millivolt value. The schedules and the boundary are described in `docs/CHAOS_ENGINE.md`.
 
+## v0.5 Autonomous recovery
+
+The health task owns recovery. After it ingests the mailbox it asks `RecoveryManager` what to do, then applies mode policy. The manager does not write the registry and does not request a mode. Two actions exist: restart navigation, and switch from primary GPS to backup GPS. The rules are in `docs/RECOVERY.md`.
+
+Navigation restart is a handoff on the existing worker. Generation N's `poll` returns before generation N+1 is armed. The generation counter does not wrap. Two restarts may be executed in one episode. Success is three consecutive on-time completions from that generation, not the handoff itself. While that verification is open, or after it has failed, `SafeMode` does not return to `Standby` and `Degraded` does not return to `Nominal`.
+
+Primary and backup GPS are separate simulated devices. Navigation reads each once per cycle and puts only the selected sample in the solution. A persistent primary sensor warning switches to backup and isolates primary without clearing the primary fault. Three usable backup samples from after that switch complete that recovery. Samples from before the switch do not count. There is no automatic failback.
+
+A verified isolated primary warning stays in the registry and stops blocking mode recovery. A failed backup verification does not. That `RecoveryFailed` is terminal for the mission: one automatic GPS attempt, selection stays on backup, and later healthy samples may clear fault records without clearing the recovery failure or starting another episode. A new `MissionRuntime` is what leaves that state. Fault health and recovery confidence stay separate. The stop token is checked again immediately before a navigation restart stores its new generation and re-arms.
+
 ## Build
 
 C++20, CMake, and Ninja. GoogleTest 1.15.2 is fetched by URL and hash. Warnings are errors on project targets. `ARES_ENABLE_SANITIZERS` adds ASan and UBSan for Clang and GCC, and ASan for MSVC, after a configure-time link check. The `debug-sanitizers` preset and CI turn that on for a Debug build. Sanitizers are off unless requested. The current MSYS2 UCRT64 GCC cannot link them because the runtime libraries are absent; CI uses Clang on Ubuntu, where they are present.

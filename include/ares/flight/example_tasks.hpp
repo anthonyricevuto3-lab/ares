@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ares/core/logger.hpp"
+#include "ares/flight/gps_selector.hpp"
 #include "ares/flight/navigation.hpp"
 #include "ares/flight/power_manager.hpp"
 #include "ares/flight/thermal_monitor.hpp"
@@ -45,6 +46,11 @@ public:
     NavigationCadence(core::Logger<C>& logger, const hardware::IImu<time_point>& imu,
                       const hardware::IGps<time_point>& gps, C& clock, NavigationAgeLimits limits)
         : logger_(logger), imu_(&imu), gps_(&gps), clock_(&clock), limits_(limits) {}
+    NavigationCadence(core::Logger<C>& logger, const hardware::IImu<time_point>& imu,
+                      const GpsSelector<C>& gps, C& clock, NavigationAgeLimits limits,
+                      const std::atomic<std::uint32_t>* generation = nullptr)
+        : logger_(logger), imu_(&imu), selector_(&gps), generation_(generation), clock_(&clock),
+          limits_(limits) {}
 
     void operator()(typename C::time_point scheduled, std::stop_token stop);
     [[nodiscard]] std::uint64_t cycles() const noexcept {
@@ -62,15 +68,26 @@ public:
     last_usable() const noexcept {
         return last_usable_;
     }
+    [[nodiscard]] const hardware::GpsSample<time_point>& primary_gps() const noexcept {
+        return primary_gps_;
+    }
+    [[nodiscard]] const hardware::GpsSample<time_point>& backup_gps() const noexcept {
+        return backup_gps_;
+    }
 
 private:
     core::Logger<C>& logger_;
     const hardware::IImu<time_point>* imu_{nullptr};
     const hardware::IGps<time_point>* gps_{nullptr};
+    const GpsSelector<C>* selector_{nullptr};
+    const std::atomic<std::uint32_t>* generation_{nullptr};
+    std::uint32_t seen_generation_{0};
     C* clock_{nullptr};
     NavigationAgeLimits limits_{};
     NavigationSolution<time_point> solution_{};
     std::optional<NavigationSolution<time_point>> last_usable_{};
+    hardware::GpsSample<time_point> primary_gps_{};
+    hardware::GpsSample<time_point> backup_gps_{};
     std::atomic<std::uint64_t> cycles_{0};
     std::atomic<std::uint64_t> debug_formats_{0};
 };

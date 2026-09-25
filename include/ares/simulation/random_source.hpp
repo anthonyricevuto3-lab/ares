@@ -45,7 +45,13 @@ private:
 };
 
 // One stream per simulated device. Later draws stay inside that device.
-enum class SensorStream : std::uint8_t { Imu = 0, Gps = 1, Battery = 2, Temperature = 3 };
+enum class SensorStream : std::uint8_t {
+    Imu = 0,
+    Gps = 1,
+    Battery = 2,
+    Temperature = 3,
+    BackupGps = 4
+};
 
 // stream_seed = SplitMix64(mission_seed + (stream_index + 1) * kStreamSalt).next()
 // Unsigned addition and multiplication wrap modulo 2^64. The salt is the

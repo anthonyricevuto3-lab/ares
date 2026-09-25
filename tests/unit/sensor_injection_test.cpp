@@ -69,11 +69,11 @@ TEST(SensorInjection, GpsUnavailableIsReportedByTheSensorAndRecordedByFdir) {
     rig.read_navigation();
     EXPECT_EQ(rig.gps.read().status, hardware::SensorStatus::Unavailable);
     EXPECT_EQ(rig.navigation.solution().gps_usability, flight::SampleUsability::Unavailable);
-    EXPECT_EQ(rig.fdir.observe_sensor(flight::FaultSource::Gps,
+    EXPECT_EQ(rig.fdir.observe_sensor(flight::FaultSource::PrimaryGps,
                                       rig.navigation.solution().gps_usability, Time{}),
               flight::RegistryStatus::Activated);
-    const flight::FaultRecord<Time>* fault =
-        rig.fdir.registry().find(flight::FaultType::SensorUnavailable, flight::FaultSource::Gps);
+    const flight::FaultRecord<Time>* fault = rig.fdir.registry().find(
+        flight::FaultType::SensorUnavailable, flight::FaultSource::PrimaryGps);
     ASSERT_NE(fault, nullptr);
     EXPECT_TRUE(fault->active);
 
@@ -81,11 +81,11 @@ TEST(SensorInjection, GpsUnavailableIsReportedByTheSensorAndRecordedByFdir) {
     rig.read_navigation();
     EXPECT_EQ(rig.gps.read().status, hardware::SensorStatus::Valid);
     EXPECT_EQ(rig.navigation.solution().gps_usability, flight::SampleUsability::Usable);
-    EXPECT_EQ(rig.fdir.observe_sensor(flight::FaultSource::Gps, flight::SampleUsability::Usable,
-                                      rig.clock.now().time),
+    EXPECT_EQ(rig.fdir.observe_sensor(flight::FaultSource::PrimaryGps,
+                                      flight::SampleUsability::Usable, rig.clock.now().time),
               flight::RegistryStatus::Cleared);
     EXPECT_FALSE(rig.fdir.registry()
-                     .find(flight::FaultType::SensorUnavailable, flight::FaultSource::Gps)
+                     .find(flight::FaultType::SensorUnavailable, flight::FaultSource::PrimaryGps)
                      ->active);
 }
 
@@ -97,9 +97,9 @@ TEST(SensorInjection, GpsInvalidFollowsTheSamePath) {
     rig.read_navigation();
     EXPECT_EQ(rig.gps.read().status, hardware::SensorStatus::Invalid);
     EXPECT_EQ(rig.navigation.solution().gps_usability, flight::SampleUsability::Invalid);
-    EXPECT_EQ(
-        rig.fdir.observe_sensor(flight::FaultSource::Gps, flight::SampleUsability::Invalid, Time{}),
-        flight::RegistryStatus::Activated);
+    EXPECT_EQ(rig.fdir.observe_sensor(flight::FaultSource::PrimaryGps,
+                                      flight::SampleUsability::Invalid, Time{}),
+              flight::RegistryStatus::Activated);
     ASSERT_EQ(rig.clock.advance(1s), ares::core::AdvanceStatus::Applied);
     rig.read_navigation();
     EXPECT_EQ(rig.navigation.solution().gps_usability, flight::SampleUsability::Usable);
@@ -138,16 +138,16 @@ TEST(SensorInjection, GpsFreezeBecomesStaleThroughFreshnessThenRestores) {
     EXPECT_EQ(rig.gps.read().time, Time{});
     EXPECT_EQ(rig.gps.read().status, hardware::SensorStatus::Valid);
     EXPECT_EQ(rig.navigation.solution().gps_usability, flight::SampleUsability::Stale);
-    EXPECT_EQ(rig.fdir.observe_sensor(flight::FaultSource::Gps, flight::SampleUsability::Stale,
-                                      rig.clock.now().time),
+    EXPECT_EQ(rig.fdir.observe_sensor(flight::FaultSource::PrimaryGps,
+                                      flight::SampleUsability::Stale, rig.clock.now().time),
               flight::RegistryStatus::Activated);
 
     ASSERT_EQ(rig.clock.advance(2s), ares::core::AdvanceStatus::Applied);
     rig.read_navigation();
     EXPECT_EQ(rig.gps.read().time, rig.clock.now().time);
     EXPECT_EQ(rig.navigation.solution().gps_usability, flight::SampleUsability::Usable);
-    EXPECT_EQ(rig.fdir.observe_sensor(flight::FaultSource::Gps, flight::SampleUsability::Usable,
-                                      rig.clock.now().time),
+    EXPECT_EQ(rig.fdir.observe_sensor(flight::FaultSource::PrimaryGps,
+                                      flight::SampleUsability::Usable, rig.clock.now().time),
               flight::RegistryStatus::Cleared);
 }
 

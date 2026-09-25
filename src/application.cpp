@@ -7,6 +7,7 @@
 #include "ares/flight/example_tasks.hpp"
 #include "ares/flight/executive.hpp"
 #include "ares/flight/fdir.hpp"
+#include "ares/flight/freshness.hpp"
 #include "ares/flight/power_manager.hpp"
 #include "ares/flight/sample_limits.hpp"
 #include "ares/flight/thermal_monitor.hpp"
@@ -48,15 +49,18 @@ struct MissionRuntime {
         : logger_(out, clock_), spacecraft_(clock_),
           imu_(spacecraft_, simulation::SensorNoise{options.seed}, &chaos_),
           gps_(spacecraft_, simulation::SensorNoise{options.seed}, &chaos_),
+          backup_gps_(spacecraft_, simulation::SensorNoise{options.seed}, &chaos_,
+                      simulation::SensorStream::BackupGps, simulation::ChaosTarget::BackupGps),
           battery_(spacecraft_, simulation::SensorNoise{options.seed}, &chaos_),
           temperature_(spacecraft_, simulation::SensorNoise{options.seed}),
-          executive_(clock_, logger_, events_), health_(logger_),
-          navigation_(logger_, imu_, gps_, clock_,
+          executive_(clock_, logger_, events_), health_(logger_), selector_(gps_, backup_gps_),
+          navigation_(logger_, imu_, selector_, clock_,
                       flight::NavigationAgeLimits{flight::limits::kNavigationImuMaxAge,
-                                                  flight::limits::kNavigationGpsMaxAge}),
+                                                  flight::limits::kNavigationGpsMaxAge},
+                      &navigation_restart_.generation),
           comms_(logger_), power_(battery_, clock_, flight::limits::kPowerMaxAge),
           thermal_(temperature_, clock_, flight::limits::kThermalMaxAge), fdir_(events_),
-          supervisor_(clock_) {
+          supervisor_(clock_, nullptr, &navigation_restart_) {
         spacecraft_.set_epoch_now();
         if (scenario.battery_baseline_mv > 0) {
             simulation::SimulationTruth<core::SteadyClock> truth = spacecraft_.truth();
@@ -78,10 +82,13 @@ struct MissionRuntime {
     simulation::SpacecraftModel<core::SteadyClock> spacecraft_;
     simulation::SimulatedImu<core::SteadyClock> imu_;
     simulation::SimulatedGps<core::SteadyClock> gps_;
+    simulation::SimulatedGps<core::SteadyClock> backup_gps_;
     simulation::SimulatedBatteryMonitor<core::SteadyClock> battery_;
     simulation::SimulatedTemperatureSensor<core::SteadyClock> temperature_;
     flight::FlightExecutive<core::SteadyClock> executive_;
     flight::HealthPulse<core::SteadyClock> health_;
+    core::NavigationRestart navigation_restart_{};
+    flight::GpsSelector<core::SteadyClock> selector_;
     flight::NavigationCadence<core::SteadyClock> navigation_;
     flight::CommBeacon<core::SteadyClock> comms_;
     flight::PowerManager<core::SteadyClock> power_;
@@ -113,7 +120,20 @@ void publish_navigation_observation(MissionRuntime& runtime) {
     const flight::NavigationSolution<core::SteadyClock::time_point>& solution =
         runtime.navigation_.solution();
     runtime.fault_mailbox_.publish_sensor(flight::FaultSource::Imu, solution.imu_usability);
-    runtime.fault_mailbox_.publish_sensor(flight::FaultSource::Gps, solution.gps_usability);
+    const core::ClockSample<core::SteadyClock::time_point> now = runtime.clock_.now();
+    if (now.status != core::ClockStatus::Ok) {
+        return;
+    }
+    runtime.fault_mailbox_.publish_sensor(
+        flight::FaultSource::PrimaryGps,
+        flight::evaluate_freshness(runtime.navigation_.primary_gps().status,
+                                   runtime.navigation_.primary_gps().time, now.time,
+                                   flight::limits::kNavigationGpsMaxAge));
+    runtime.fault_mailbox_.publish_sensor(
+        flight::FaultSource::BackupGps,
+        flight::evaluate_freshness(runtime.navigation_.backup_gps().status,
+                                   runtime.navigation_.backup_gps().time, now.time,
+                                   flight::limits::kNavigationGpsMaxAge));
 }
 
 void evaluate_fdir(MissionRuntime& runtime, std::stop_token stop) {
@@ -126,8 +146,20 @@ void evaluate_fdir(MissionRuntime& runtime, std::stop_token stop) {
                                           runtime.thermal_.usability());
     runtime.fault_mailbox_.publish_battery(runtime.power_.usability(),
                                            runtime.power_.latest_observation().voltage);
+    const bool primary_selected = runtime.selector_.selection() == flight::GpsSelection::Primary;
     (void)flight::run_fdir_cycle(runtime.fdir_, runtime.fault_mailbox_, runtime.executive_,
-                                 runtime.clock_.now(), stop);
+                                 runtime.clock_.now(), stop,
+                                 runtime.supervisor_.navigation_generation(), primary_selected);
+    if (stop.stop_requested()) {
+        return;
+    }
+    const flight::RecoveryCommand command = runtime.fdir_.last_recovery_command();
+    if (command.restart_navigation) {
+        (void)runtime.supervisor_.request_navigation_restart();
+    }
+    if (command.failover_to_backup) {
+        runtime.selector_.failover_to_backup();
+    }
 }
 
 } // namespace
@@ -177,7 +209,11 @@ int run(int argc, char** argv, InjectedFault fault) {
             (void)runtime.cycles_.push(event);
             if (const std::optional<flight::FaultSource> source =
                     source_for_task(event.id.text())) {
-                runtime.fault_mailbox_.publish_deadline(*source, event.deadline_missed);
+                const std::uint32_t generation =
+                    *source == flight::FaultSource::NavigationTask
+                        ? runtime.navigation_restart_.generation.load(std::memory_order_acquire)
+                        : 0U;
+                runtime.fault_mailbox_.publish_deadline(*source, event.deadline_missed, generation);
             }
         },
         [&runtime](const core::DeadlineMissEvent<core::SteadyClock::time_point>& event) {

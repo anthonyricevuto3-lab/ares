@@ -5,6 +5,7 @@
 #include "ares/flight/freshness.hpp"
 #include "ares/hardware/units.hpp"
 
+#include <cstdint>
 #include <mutex>
 
 namespace ares::flight {
@@ -29,6 +30,10 @@ public:
         // later sample replaced that Usable as the newest usability.
         bool usable_seen{false};
         SampleUsability usability{SampleUsability::Unavailable};
+        // Final consecutive physical-sample runs. Not cleared by consume, so a
+        // run can span health cycles. A non-usable sample zeros the usable run.
+        std::uint8_t usable_run{0};
+        std::uint8_t unusable_run{0};
     };
 
     struct BatterySlot {
@@ -40,11 +45,16 @@ public:
     struct DeadlineSlot {
         bool pending{false};
         bool missed{false};
+        // Generation that produced on_time_run. A generation change zeros the run
+        // so an older completion cannot verify the new generation.
+        std::uint32_t generation{0};
+        std::uint8_t on_time_run{0};
     };
 
     struct Snapshot {
         SensorSlot imu{};
         SensorSlot gps{};
+        SensorSlot backup_gps{};
         SensorSlot temperature{};
         BatterySlot battery{};
         DeadlineSlot navigation{};
@@ -66,9 +76,25 @@ public:
         }
         if (usability == SampleUsability::Usable) {
             slot->usable_seen = true;
+            slot->unusable_run = 0;
+            if (slot->usable_run < 3) {
+                ++slot->usable_run;
+            }
+        } else {
+            slot->usable_run = 0;
+            if (slot->unusable_run < 3) {
+                ++slot->unusable_run;
+            }
         }
         slot->usability = usability;
         slot->pending = true;
+    }
+
+    // Starts a new backup verification window. Does not touch fault records.
+    void rebaseline_backup_run() {
+        std::lock_guard lock(mutex_);
+        backup_gps_.usable_run = 0;
+        backup_gps_.unusable_run = 0;
     }
 
     void publish_battery(SampleUsability usability, hardware::Millivolts voltage) {
@@ -78,16 +104,26 @@ public:
         battery_.pending = true;
     }
 
-    void publish_deadline(FaultSource source, bool missed) {
+    void publish_deadline(FaultSource source, bool missed, std::uint32_t generation = 0) {
         std::lock_guard lock(mutex_);
         DeadlineSlot* slot = deadline_slot(source);
         if (slot == nullptr) {
             return;
         }
+        if (slot->generation != generation) {
+            slot->on_time_run = 0;
+            slot->generation = generation;
+        }
         if (missed) {
             slot->missed = true;
-        } else if (!slot->pending) {
-            slot->missed = false;
+            slot->on_time_run = 0;
+        } else {
+            if (!slot->pending) {
+                slot->missed = false;
+            }
+            if (slot->on_time_run < 3) {
+                ++slot->on_time_run;
+            }
         }
         slot->pending = true;
     }
@@ -97,6 +133,7 @@ public:
         Snapshot out;
         out.imu = imu_;
         out.gps = gps_;
+        out.backup_gps = backup_gps_;
         out.temperature = temperature_;
         out.battery = battery_;
         out.navigation = navigation_;
@@ -104,6 +141,7 @@ public:
         out.communications = communications_;
         retire(imu_);
         retire(gps_);
+        retire(backup_gps_);
         retire(temperature_);
         battery_.pending = false;
         navigation_.pending = false;
@@ -122,8 +160,10 @@ private:
         switch (source) {
         case FaultSource::Imu:
             return &imu_;
-        case FaultSource::Gps:
+        case FaultSource::PrimaryGps:
             return &gps_;
+        case FaultSource::BackupGps:
+            return &backup_gps_;
         case FaultSource::Temperature:
             return &temperature_;
         case FaultSource::Battery:
@@ -144,7 +184,8 @@ private:
         case FaultSource::CommunicationsTask:
             return &communications_;
         case FaultSource::Imu:
-        case FaultSource::Gps:
+        case FaultSource::PrimaryGps:
+        case FaultSource::BackupGps:
         case FaultSource::Battery:
         case FaultSource::Temperature:
             return nullptr;
@@ -155,6 +196,7 @@ private:
     std::mutex mutex_{};
     SensorSlot imu_{};
     SensorSlot gps_{};
+    SensorSlot backup_gps_{};
     SensorSlot temperature_{};
     BatterySlot battery_{};
     DeadlineSlot navigation_{};

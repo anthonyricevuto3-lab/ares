@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ares/hardware/interfaces.hpp"
+#include "ares/simulation/chaos_engine.hpp"
 #include "ares/simulation/random_source.hpp"
 #include "ares/simulation/spacecraft_model.hpp"
 
@@ -40,9 +41,12 @@ template <core::Clock C> class SimulatedGps final : public hardware::IGps<typena
 public:
     using time_point = typename C::time_point;
     explicit SimulatedGps(const SpacecraftModel<C>& model, SensorNoise noise = {},
-                          const ChaosEngine<C>* chaos = nullptr)
-        : model_(model), rng_(derive_sensor_seed(noise.mission_seed, SensorStream::Gps)),
-          position_noise_(noise.position), velocity_noise_(noise.velocity), chaos_(chaos) {}
+                          const ChaosEngine<C>* chaos = nullptr,
+                          SensorStream stream = SensorStream::Gps,
+                          ChaosTarget target = ChaosTarget::Gps)
+        : model_(model), rng_(derive_sensor_seed(noise.mission_seed, stream)),
+          position_noise_(noise.position), velocity_noise_(noise.velocity), chaos_(chaos),
+          target_(target) {}
     [[nodiscard]] hardware::GpsSample<time_point> read() const override;
 
 private:
@@ -51,6 +55,7 @@ private:
     std::int64_t position_noise_;
     std::int64_t velocity_noise_;
     const ChaosEngine<C>* chaos_{nullptr};
+    ChaosTarget target_{ChaosTarget::Gps};
     mutable std::optional<hardware::GpsSample<time_point>> frozen_{};
     mutable std::optional<std::uint16_t> frozen_id_{};
 };

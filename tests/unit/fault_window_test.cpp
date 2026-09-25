@@ -40,14 +40,14 @@ struct Harness {
         for (int index = 0; index < count; ++index) {
             ASSERT_EQ(clock.advance(1s), ares::core::AdvanceStatus::Applied);
             const flight::RegistryStatus status = fdir.observe_sensor(
-                flight::FaultSource::Gps, flight::SampleUsability::Stale, stamp());
+                flight::FaultSource::PrimaryGps, flight::SampleUsability::Stale, stamp());
             EXPECT_EQ(status, index == 0 ? flight::RegistryStatus::Activated
                                          : flight::RegistryStatus::Updated);
         }
     }
 
     [[nodiscard]] const flight::FaultRecord<Time>* gps(flight::FaultType type) const {
-        return fdir.registry().find(type, flight::FaultSource::Gps);
+        return fdir.registry().find(type, flight::FaultSource::PrimaryGps);
     }
 
     [[nodiscard]] flight::PolicyDecision consume() {
@@ -63,8 +63,9 @@ TEST(FaultWindow, UsableThenStaleRestartsACountOfOne) {
     harness.seed_gps_stale(1);
     ASSERT_EQ(harness.gps(flight::FaultType::SensorStale)->consecutive_count, 1U);
 
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::Usable);
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::Stale);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps,
+                                   flight::SampleUsability::Usable);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps, flight::SampleUsability::Stale);
     (void)harness.consume();
 
     const flight::FaultRecord<Time>* stale = harness.gps(flight::FaultType::SensorStale);
@@ -81,8 +82,9 @@ TEST(FaultWindow, UsableThenStaleRestartsACountOfTwoAndStaysNominal) {
     harness.seed_gps_stale(2);
     ASSERT_EQ(harness.gps(flight::FaultType::SensorStale)->consecutive_count, 2U);
 
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::Usable);
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::Stale);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps,
+                                   flight::SampleUsability::Usable);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps, flight::SampleUsability::Stale);
     const flight::PolicyDecision decision = harness.consume();
 
     const flight::FaultRecord<Time>* stale = harness.gps(flight::FaultType::SensorStale);
@@ -97,9 +99,10 @@ TEST(FaultWindow, UsableThenStaleRestartsACountOfTwoAndStaysNominal) {
 TEST(FaultWindow, StaleUsableStaleInOneWindowStartsAtOne) {
     Harness harness;
     harness.reach_nominal();
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::Stale);
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::Usable);
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::Stale);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps, flight::SampleUsability::Stale);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps,
+                                   flight::SampleUsability::Usable);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps, flight::SampleUsability::Stale);
 
     const auto sample = harness.mailbox.consume();
     EXPECT_TRUE(sample.gps.pending);
@@ -120,8 +123,10 @@ TEST(FaultWindow, InvalidThenUsableClearsSensorHealth) {
     harness.reach_nominal();
     harness.seed_gps_stale(1);
 
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::Invalid);
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::Usable);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps,
+                                   flight::SampleUsability::Invalid);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps,
+                                   flight::SampleUsability::Usable);
     (void)harness.consume();
 
     const flight::FaultRecord<Time>* stale = harness.gps(flight::FaultType::SensorStale);
@@ -137,8 +142,10 @@ TEST(FaultWindow, UsableThenInvalidClearsOldPersistence) {
     harness.reach_nominal();
     harness.seed_gps_stale(2);
 
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::Usable);
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::Invalid);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps,
+                                   flight::SampleUsability::Usable);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps,
+                                   flight::SampleUsability::Invalid);
     (void)harness.consume();
 
     const flight::FaultRecord<Time>* stale = harness.gps(flight::FaultType::SensorStale);
@@ -157,8 +164,10 @@ TEST(FaultWindow, UsableThenFutureClearsAndRaisesNothing) {
     harness.reach_nominal();
     harness.seed_gps_stale(2);
 
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::Usable);
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::Future);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps,
+                                   flight::SampleUsability::Usable);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps,
+                                   flight::SampleUsability::Future);
     const flight::PolicyDecision decision = harness.consume();
 
     const flight::FaultRecord<Time>* stale = harness.gps(flight::FaultType::SensorStale);
@@ -177,8 +186,10 @@ TEST(FaultWindow, UsableThenTimeErrorClearsAndRaisesNothing) {
     harness.reach_nominal();
     harness.seed_gps_stale(2);
 
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::Usable);
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::TimeError);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps,
+                                   flight::SampleUsability::Usable);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps,
+                                   flight::SampleUsability::TimeError);
     (void)harness.consume();
 
     const flight::FaultRecord<Time>* stale = harness.gps(flight::FaultType::SensorStale);
@@ -194,7 +205,8 @@ TEST(FaultWindow, ThreeStaleConsumesStillReachDegraded) {
     harness.reach_nominal();
     flight::PolicyDecision last{};
     for (int sample = 0; sample < 3; ++sample) {
-        harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::Stale);
+        harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps,
+                                       flight::SampleUsability::Stale);
         last = harness.consume();
         const flight::FaultRecord<Time>* stale = harness.gps(flight::FaultType::SensorStale);
         ASSERT_NE(stale, nullptr);
@@ -216,16 +228,17 @@ TEST(FaultWindow, ThreeStaleConsumesStillReachDegraded) {
 TEST(FaultWindow, StaleFutureStaleContinuesAcrossConsumes) {
     Harness harness;
     harness.reach_nominal();
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::Stale);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps, flight::SampleUsability::Stale);
     (void)harness.consume();
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::Future);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps,
+                                   flight::SampleUsability::Future);
     (void)harness.consume();
     const flight::FaultRecord<Time>* during = harness.gps(flight::FaultType::SensorStale);
     ASSERT_NE(during, nullptr);
     EXPECT_TRUE(during->active);
     EXPECT_EQ(during->consecutive_count, 1U);
 
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::Stale);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps, flight::SampleUsability::Stale);
     (void)harness.consume();
     EXPECT_TRUE(during->active);
     EXPECT_EQ(during->consecutive_count, 2U);
@@ -235,15 +248,16 @@ TEST(FaultWindow, StaleFutureStaleContinuesAcrossConsumes) {
 TEST(FaultWindow, StaleTimeErrorStaleContinuesAcrossConsumes) {
     Harness harness;
     harness.reach_nominal();
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::Stale);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps, flight::SampleUsability::Stale);
     (void)harness.consume();
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::TimeError);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps,
+                                   flight::SampleUsability::TimeError);
     (void)harness.consume();
     const flight::FaultRecord<Time>* during = harness.gps(flight::FaultType::SensorStale);
     ASSERT_NE(during, nullptr);
     EXPECT_EQ(during->consecutive_count, 1U);
 
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::Stale);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps, flight::SampleUsability::Stale);
     (void)harness.consume();
     EXPECT_EQ(during->consecutive_count, 2U);
     EXPECT_TRUE(during->active);
@@ -252,9 +266,10 @@ TEST(FaultWindow, StaleTimeErrorStaleContinuesAcrossConsumes) {
 TEST(FaultWindow, StaleInvalidStaleRestartsEachRecord) {
     Harness harness;
     harness.reach_nominal();
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::Stale);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps, flight::SampleUsability::Stale);
     (void)harness.consume();
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::Invalid);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps,
+                                   flight::SampleUsability::Invalid);
     (void)harness.consume();
 
     const flight::FaultRecord<Time>* stale = harness.gps(flight::FaultType::SensorStale);
@@ -266,7 +281,7 @@ TEST(FaultWindow, StaleInvalidStaleRestartsEachRecord) {
     EXPECT_TRUE(invalid->active);
     EXPECT_EQ(invalid->consecutive_count, 1U);
 
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::Stale);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps, flight::SampleUsability::Stale);
     (void)harness.consume();
     EXPECT_TRUE(stale->active);
     EXPECT_EQ(stale->consecutive_count, 1U);
@@ -282,7 +297,7 @@ TEST(FaultWindow, StopBeforeConsumeLeavesTheObservationPending) {
     // the mailbox is destroyed, which is when a still-pending sample is dropped.
     Harness harness;
     harness.reach_nominal();
-    harness.mailbox.publish_sensor(flight::FaultSource::Gps, flight::SampleUsability::Stale);
+    harness.mailbox.publish_sensor(flight::FaultSource::PrimaryGps, flight::SampleUsability::Stale);
 
     std::stop_source source;
     source.request_stop();

@@ -276,3 +276,24 @@ TEST(ChaosEngine, EdgeCopyReportsTruncationWithoutChangingInjection) {
     EXPECT_TRUE(engine.view_at(Time{1s}).gps_frozen);
     EXPECT_FALSE(engine.view_at(Time{2s}).gps_frozen);
 }
+
+TEST(ChaosEngine, GpsAndPrimaryGpsAreOneTargetAndBackupIsNot) {
+    simulation::ChaosEngine<Clock> engine;
+    const simulation::ChaosEvent overlap[] = {
+        {simulation::InjectionKind::SensorFreeze, simulation::ChaosTarget::Gps, 1s, 2s, 0, 0},
+        {simulation::InjectionKind::SensorInvalid, simulation::ChaosTarget::PrimaryGps, 2s, 2s, 0,
+         0},
+    };
+    EXPECT_FALSE(engine.load(std::span{overlap}, Time{}));
+    EXPECT_EQ(engine.size(), 0U);
+
+    const simulation::ChaosEvent separate[] = {
+        {simulation::InjectionKind::SensorFreeze, simulation::ChaosTarget::Gps, 1s, 2s, 0, 0},
+        {simulation::InjectionKind::SensorInvalid, simulation::ChaosTarget::BackupGps, 1s, 2s, 0,
+         0},
+    };
+    ASSERT_TRUE(engine.load(std::span{separate}, Time{}));
+    EXPECT_TRUE(engine.sensor_frozen(simulation::ChaosTarget::PrimaryGps, Time{1s}));
+    EXPECT_TRUE(engine.sensor_invalid(simulation::ChaosTarget::BackupGps, Time{1s}));
+    EXPECT_FALSE(engine.sensor_invalid(simulation::ChaosTarget::Gps, Time{1s}));
+}

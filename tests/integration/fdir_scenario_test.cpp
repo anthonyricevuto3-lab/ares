@@ -66,8 +66,8 @@ TEST(FdirScenario, PersistentGpsStaleMovesNominalToDegraded) {
     const std::size_t modes_at_nominal = harness.mode_changes().size();
 
     const Time first = harness.stamp();
-    EXPECT_EQ(harness.fdir.observe_sensor(flight::FaultSource::Gps, flight::SampleUsability::Stale,
-                                          first),
+    EXPECT_EQ(harness.fdir.observe_sensor(flight::FaultSource::PrimaryGps,
+                                          flight::SampleUsability::Stale, first),
               flight::RegistryStatus::Activated);
     const flight::PolicyDecision first_decision = harness.fdir.apply(harness.executive);
     EXPECT_EQ(harness.executive.mode(), flight::SpacecraftMode::Nominal);
@@ -77,16 +77,16 @@ TEST(FdirScenario, PersistentGpsStaleMovesNominalToDegraded) {
 
     ASSERT_EQ(harness.clock.advance(1s), ares::core::AdvanceStatus::Applied);
     const Time second = harness.stamp();
-    EXPECT_EQ(harness.fdir.observe_sensor(flight::FaultSource::Gps, flight::SampleUsability::Stale,
-                                          second),
+    EXPECT_EQ(harness.fdir.observe_sensor(flight::FaultSource::PrimaryGps,
+                                          flight::SampleUsability::Stale, second),
               flight::RegistryStatus::Updated);
     (void)harness.fdir.apply(harness.executive);
     EXPECT_EQ(harness.executive.mode(), flight::SpacecraftMode::Nominal);
 
     ASSERT_EQ(harness.clock.advance(1s), ares::core::AdvanceStatus::Applied);
     const Time third = harness.stamp();
-    EXPECT_EQ(harness.fdir.observe_sensor(flight::FaultSource::Gps, flight::SampleUsability::Stale,
-                                          third),
+    EXPECT_EQ(harness.fdir.observe_sensor(flight::FaultSource::PrimaryGps,
+                                          flight::SampleUsability::Stale, third),
               flight::RegistryStatus::Updated);
     const flight::PolicyDecision escalated = harness.fdir.apply(harness.executive);
     EXPECT_EQ(escalated.action, flight::RecoveryAction::ContinueDegraded);
@@ -96,8 +96,8 @@ TEST(FdirScenario, PersistentGpsStaleMovesNominalToDegraded) {
     EXPECT_EQ(*escalated.transition, flight::TransitionStatus::Accepted);
     EXPECT_EQ(harness.executive.mode(), flight::SpacecraftMode::Degraded);
 
-    const flight::FaultRecord<Time>* record =
-        harness.fdir.registry().find(flight::FaultType::SensorStale, flight::FaultSource::Gps);
+    const flight::FaultRecord<Time>* record = harness.fdir.registry().find(
+        flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps);
     ASSERT_NE(record, nullptr);
     EXPECT_TRUE(record->active);
     EXPECT_EQ(record->first_detected, first);
@@ -115,28 +115,28 @@ TEST(FdirScenario, RecoveredGpsReturnsDegradedToNominal) {
     Harness harness;
     harness.reach_nominal();
     for (int sample = 0; sample < 3; ++sample) {
-        (void)harness.fdir.observe_sensor(flight::FaultSource::Gps, flight::SampleUsability::Stale,
-                                          harness.stamp());
+        (void)harness.fdir.observe_sensor(flight::FaultSource::PrimaryGps,
+                                          flight::SampleUsability::Stale, harness.stamp());
         (void)harness.fdir.apply(harness.executive);
         ASSERT_EQ(harness.clock.advance(1s), ares::core::AdvanceStatus::Applied);
     }
     ASSERT_EQ(harness.executive.mode(), flight::SpacecraftMode::Degraded);
-    const flight::FaultRecord<Time>* before =
-        harness.fdir.registry().find(flight::FaultType::SensorStale, flight::FaultSource::Gps);
+    const flight::FaultRecord<Time>* before = harness.fdir.registry().find(
+        flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps);
     ASSERT_NE(before, nullptr);
     const Time first = before->first_detected;
     const std::uint32_t occurrences = before->occurrence_count;
 
     const Time recovered_at = harness.stamp();
-    EXPECT_EQ(harness.fdir.observe_sensor(flight::FaultSource::Gps, flight::SampleUsability::Usable,
-                                          recovered_at),
+    EXPECT_EQ(harness.fdir.observe_sensor(flight::FaultSource::PrimaryGps,
+                                          flight::SampleUsability::Usable, recovered_at),
               flight::RegistryStatus::Cleared);
     const flight::PolicyDecision decision = harness.fdir.apply(harness.executive);
     EXPECT_EQ(decision.action, flight::RecoveryAction::None);
     EXPECT_EQ(harness.executive.mode(), flight::SpacecraftMode::Nominal);
 
-    const flight::FaultRecord<Time>* record =
-        harness.fdir.registry().find(flight::FaultType::SensorStale, flight::FaultSource::Gps);
+    const flight::FaultRecord<Time>* record = harness.fdir.registry().find(
+        flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps);
     ASSERT_NE(record, nullptr);
     EXPECT_FALSE(record->active);
     EXPECT_EQ(record->first_detected, first);
@@ -226,12 +226,12 @@ TEST(FdirScenario, ReentrantPolicyRequestIsRejected) {
             ASSERT_EQ(harness.clock.advance(1s), ares::core::AdvanceStatus::Applied);
         }
         const flight::RegistryStatus status = harness.fdir.observe_sensor(
-            flight::FaultSource::Gps, flight::SampleUsability::Stale, harness.stamp());
+            flight::FaultSource::PrimaryGps, flight::SampleUsability::Stale, harness.stamp());
         EXPECT_EQ(status, sample == 0 ? flight::RegistryStatus::Activated
                                       : flight::RegistryStatus::Updated);
     }
-    const flight::FaultRecord<Time>* before =
-        harness.fdir.registry().find(flight::FaultType::SensorStale, flight::FaultSource::Gps);
+    const flight::FaultRecord<Time>* before = harness.fdir.registry().find(
+        flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps);
     ASSERT_NE(before, nullptr);
     ASSERT_EQ(before->consecutive_count, 3U);
     const std::uint32_t occurrence = before->occurrence_count;
@@ -250,8 +250,8 @@ TEST(FdirScenario, ReentrantPolicyRequestIsRejected) {
     ASSERT_TRUE(nested.transition.has_value());
     EXPECT_EQ(*nested.transition, flight::TransitionStatus::Rejected);
 
-    const flight::FaultRecord<Time>* after =
-        harness.fdir.registry().find(flight::FaultType::SensorStale, flight::FaultSource::Gps);
+    const flight::FaultRecord<Time>* after = harness.fdir.registry().find(
+        flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps);
     ASSERT_NE(after, nullptr);
     EXPECT_TRUE(after->active);
     EXPECT_EQ(after->consecutive_count, 3U);

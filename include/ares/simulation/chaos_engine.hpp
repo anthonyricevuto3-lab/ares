@@ -30,7 +30,17 @@ enum class ChaosTarget : std::uint8_t {
     Battery,
     NavigationTask,
     CommunicationsTask,
+    PrimaryGps,
+    BackupGps,
 };
+
+// Gps and PrimaryGps are one device. BackupGps is the other.
+[[nodiscard]] constexpr bool same_physical_target(ChaosTarget left, ChaosTarget right) noexcept {
+    const auto canonical = [](ChaosTarget target) noexcept {
+        return target == ChaosTarget::PrimaryGps ? ChaosTarget::Gps : target;
+    };
+    return canonical(left) == canonical(right);
+}
 
 // Active while epoch + start <= now < epoch + start + duration.
 // parameter is millivolts for a battery override and nanoseconds for a task delay.
@@ -105,6 +115,10 @@ struct InjectionView {
         return "navigation";
     case ChaosTarget::CommunicationsTask:
         return "communications";
+    case ChaosTarget::PrimaryGps:
+        return "primary-gps";
+    case ChaosTarget::BackupGps:
+        return "backup-gps";
     }
     return "target";
 }
@@ -273,7 +287,7 @@ private:
                 continue;
             }
             for (auto right = left + 1; right != events.end(); ++right) {
-                if (left->target != right->target) {
+                if (!same_physical_target(left->target, right->target)) {
                     continue;
                 }
                 core::Duration right_end{core::Duration::zero()};
@@ -319,7 +333,7 @@ private:
         }
         for (std::size_t index = 0; index < count_; ++index) {
             const ChaosEvent& event = events_.at(index);
-            if (event.kind != kind || event.target != target) {
+            if (event.kind != kind || !same_physical_target(event.target, target)) {
                 continue;
             }
             core::Duration end{core::Duration::zero()};

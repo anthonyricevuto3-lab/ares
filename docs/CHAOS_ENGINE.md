@@ -24,7 +24,7 @@ FDIR decides whether a condition is a fault. v0.3.1 policy is unchanged.
 
 ## Scenario model
 
-An event is a typed record: injection kind, target, start, duration, and one integer parameter. Kinds in v0.4 are `SensorUnavailable`, `SensorInvalid`, `SensorFreeze`, `BatteryVoltageOverride`, and `TaskExecutionDelay`. Targets are IMU, GPS, battery, the navigation task, and the communications task.
+An event is a typed record: injection kind, target, start, duration, and one integer parameter. Kinds are `SensorUnavailable`, `SensorInvalid`, `SensorFreeze`, `BatteryVoltageOverride`, and `TaskExecutionDelay`. Targets are IMU, GPS, primary GPS, backup GPS, battery, the navigation task, and the communications task. `Gps` and `PrimaryGps` are one device: an overlap between them is rejected. `BackupGps` is the other device and may overlap the primary.
 
 Time is ARES monotonic time from the scenario epoch, which is the clock sample taken when the workers are about to start. There is no wall-clock schedule and no sleep in the scenario. An event is active while `start <= elapsed < start + duration`. A zero duration never activates. The schedule holds at most 16 events. Two events that share a timestamp keep declaration order. If an event ends at the same time another starts, the end is reported first.
 
@@ -71,4 +71,4 @@ At shutdown the process logs one scenario line: name, final mode, fault activati
 
 ## What this milestone does not do
 
-It does not restart a task, add a redundant sensor, roll back a checkpoint, or vote. It does not add a communications stack. It does not make FDIR smarter.
+Chaos does not restart a task, command a sensor switch, roll back a checkpoint, or vote. Navigation restart and GPS failover are flight recovery, described in `docs/RECOVERY.md`. Chaos still does not add a communications stack, and it does not call FDIR.

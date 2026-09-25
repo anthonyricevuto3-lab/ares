@@ -145,7 +145,7 @@ hardware::GpsSample<typename SimulatedGps<C>::time_point> SimulatedGps<C>::read(
     const std::optional<std::uint16_t> freeze_id =
         chaos_ == nullptr
             ? std::nullopt
-            : chaos_->active_sequence(InjectionKind::SensorFreeze, ChaosTarget::Gps, state->time);
+            : chaos_->active_sequence(InjectionKind::SensorFreeze, target_, state->time);
     if (freeze_id.has_value() && frozen_id_ == freeze_id && frozen_.has_value()) {
         return *frozen_;
     }
@@ -167,13 +167,13 @@ hardware::GpsSample<typename SimulatedGps<C>::time_point> SimulatedGps<C>::read(
         frozen_id_.reset();
         return sample;
     }
-    if (chaos_->sensor_unavailable(ChaosTarget::Gps, state->time)) {
+    if (chaos_->sensor_unavailable(target_, state->time)) {
         frozen_.reset();
         frozen_id_.reset();
         sample.status = hardware::SensorStatus::Unavailable;
         return sample;
     }
-    if (chaos_->sensor_invalid(ChaosTarget::Gps, state->time)) {
+    if (chaos_->sensor_invalid(target_, state->time)) {
         frozen_.reset();
         frozen_id_.reset();
         sample.status = hardware::SensorStatus::Invalid;

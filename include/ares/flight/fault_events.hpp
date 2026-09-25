@@ -6,6 +6,20 @@
 
 namespace ares::flight {
 
+// Subsystem recovery. Distinct from RecoveryAction, which is a mode recommendation.
+enum class RecoveryState : std::uint8_t {
+    Idle,
+    Requested,
+    Executing,
+    Verifying,
+    Succeeded,
+    Failed
+};
+
+enum class SubsystemAction : std::uint8_t { RestartTask, SwitchSensor };
+
+enum class RecoveryTarget : std::uint8_t { NavigationTask, PrimaryGps, BackupGps };
+
 // Published when a logical fault becomes active, including reactivation.
 // Not published again on a later detection of the same active fault.
 template <typename TimePoint> struct FaultActivatedEvent {
@@ -31,6 +45,16 @@ template <typename TimePoint> struct FaultUpdatedEvent {
 };
 
 // Published when an active fault becomes inactive. The registry keeps the record.
+template <typename TimePoint> struct RecoveryEvent {
+    SubsystemAction action{SubsystemAction::RestartTask};
+    RecoveryTarget target{RecoveryTarget::NavigationTask};
+    std::uint8_t attempt{0};
+    std::uint32_t generation{0};
+    TimePoint time{};
+
+    bool operator==(const RecoveryEvent&) const = default;
+};
+
 template <typename TimePoint> struct FaultClearedEvent {
     FaultType type{};
     FaultSource source{};

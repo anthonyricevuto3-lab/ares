@@ -77,7 +77,7 @@ TEST(FaultDetection, UnavailableInvalidAndStaleActivateSeparateTypes) {
     EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::Imu,
                                             flight::SampleUsability::Unavailable, time),
               flight::RegistryStatus::Activated);
-    EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::Gps,
+    EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::PrimaryGps,
                                             flight::SampleUsability::Invalid, time),
               flight::RegistryStatus::Activated);
     EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::Temperature,
@@ -87,7 +87,7 @@ TEST(FaultDetection, UnavailableInvalidAndStaleActivateSeparateTypes) {
     const flight::FaultRecord<Time>* imu =
         harness.find(flight::FaultType::SensorUnavailable, flight::FaultSource::Imu);
     const flight::FaultRecord<Time>* gps =
-        harness.find(flight::FaultType::SensorInvalid, flight::FaultSource::Gps);
+        harness.find(flight::FaultType::SensorInvalid, flight::FaultSource::PrimaryGps);
     const flight::FaultRecord<Time>* thermal =
         harness.find(flight::FaultType::SensorStale, flight::FaultSource::Temperature);
     ASSERT_NE(imu, nullptr);
@@ -105,14 +105,14 @@ TEST(FaultDetection, UsableClearsTheActiveSensorFaultAndKeepsHistory) {
     Harness harness;
     const Time stale_at = Time{} + 2s;
     const Time valid_at = Time{} + 3s;
-    ASSERT_EQ(harness.fdir().observe_sensor(flight::FaultSource::Gps,
+    ASSERT_EQ(harness.fdir().observe_sensor(flight::FaultSource::PrimaryGps,
                                             flight::SampleUsability::Stale, stale_at),
               flight::RegistryStatus::Activated);
-    EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::Gps,
+    EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::PrimaryGps,
                                             flight::SampleUsability::Usable, valid_at),
               flight::RegistryStatus::Cleared);
     const flight::FaultRecord<Time>* record =
-        harness.find(flight::FaultType::SensorStale, flight::FaultSource::Gps);
+        harness.find(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps);
     ASSERT_NE(record, nullptr);
     EXPECT_FALSE(record->active);
     EXPECT_EQ(record->first_detected, stale_at);
@@ -128,23 +128,24 @@ TEST(FaultDetection, UsableClearsTheActiveSensorFaultAndKeepsHistory) {
 TEST(FaultDetection, FutureAndTimeErrorDoNotRaiseOrClear) {
     Harness harness;
     const Time time = Time{} + 1s;
-    ASSERT_EQ(harness.fdir().observe_sensor(flight::FaultSource::Gps,
+    ASSERT_EQ(harness.fdir().observe_sensor(flight::FaultSource::PrimaryGps,
                                             flight::SampleUsability::Stale, time),
               flight::RegistryStatus::Activated);
-    EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::Gps,
+    EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::PrimaryGps,
                                             flight::SampleUsability::Future, time + 1s),
               flight::RegistryStatus::Unchanged);
-    EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::Gps,
+    EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::PrimaryGps,
                                             flight::SampleUsability::TimeError, time + 2s),
               flight::RegistryStatus::Unchanged);
     const flight::FaultRecord<Time>* record =
-        harness.find(flight::FaultType::SensorStale, flight::FaultSource::Gps);
+        harness.find(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps);
     ASSERT_NE(record, nullptr);
     EXPECT_TRUE(record->active);
     EXPECT_EQ(record->occurrence_count, 1U);
     EXPECT_EQ(record->last_detected, time);
-    EXPECT_EQ(harness.find(flight::FaultType::SensorInvalid, flight::FaultSource::Gps), nullptr);
-    EXPECT_EQ(harness.find(flight::FaultType::SensorUnavailable, flight::FaultSource::Gps),
+    EXPECT_EQ(harness.find(flight::FaultType::SensorInvalid, flight::FaultSource::PrimaryGps),
+              nullptr);
+    EXPECT_EQ(harness.find(flight::FaultType::SensorUnavailable, flight::FaultSource::PrimaryGps),
               nullptr);
 }
 
@@ -173,17 +174,17 @@ TEST(FaultDetection, StatusChangeReplacesTheSensorFault) {
 TEST(FaultDetection, RepeatedStaleUpdatesOneRecordWithoutAnEventEachCycle) {
     Harness harness;
     const Time first = Time{} + 10s;
-    ASSERT_EQ(harness.fdir().observe_sensor(flight::FaultSource::Gps,
+    ASSERT_EQ(harness.fdir().observe_sensor(flight::FaultSource::PrimaryGps,
                                             flight::SampleUsability::Stale, first),
               flight::RegistryStatus::Activated);
-    EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::Gps,
+    EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::PrimaryGps,
                                             flight::SampleUsability::Stale, first + 1s),
               flight::RegistryStatus::Updated);
-    EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::Gps,
+    EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::PrimaryGps,
                                             flight::SampleUsability::Stale, first + 2s),
               flight::RegistryStatus::Updated);
     const flight::FaultRecord<Time>* record =
-        harness.find(flight::FaultType::SensorStale, flight::FaultSource::Gps);
+        harness.find(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps);
     ASSERT_NE(record, nullptr);
     EXPECT_EQ(record->first_detected, first);
     EXPECT_EQ(record->last_detected, first + 2s);
@@ -207,7 +208,7 @@ TEST(FaultDetection, DeadlineMissIsTaskSpecificAndOnTimeClearsIt) {
     Harness harness;
     const Time missed_at = Time{} + 5s;
     const Time on_time = Time{} + 6s;
-    EXPECT_EQ(harness.fdir().observe_deadline(flight::FaultSource::Gps,
+    EXPECT_EQ(harness.fdir().observe_deadline(flight::FaultSource::PrimaryGps,
                                               flight::DeadlineFact::Missed, missed_at),
               flight::RegistryStatus::RejectedSource);
     EXPECT_EQ(harness.fdir().observe_deadline(flight::FaultSource::NavigationTask,
@@ -305,27 +306,28 @@ TEST(FaultDetection, FutureHoldContinuesTheStaleRecord) {
     const Time first = Time{} + 1s;
     const Time held = Time{} + 2s;
     const Time second = Time{} + 3s;
-    ASSERT_EQ(harness.fdir().observe_sensor(flight::FaultSource::Gps,
+    ASSERT_EQ(harness.fdir().observe_sensor(flight::FaultSource::PrimaryGps,
                                             flight::SampleUsability::Stale, first),
               flight::RegistryStatus::Activated);
-    EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::Gps,
+    EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::PrimaryGps,
                                             flight::SampleUsability::Future, held),
               flight::RegistryStatus::Unchanged);
     const flight::FaultRecord<Time>* during =
-        harness.find(flight::FaultType::SensorStale, flight::FaultSource::Gps);
+        harness.find(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps);
     ASSERT_NE(during, nullptr);
     EXPECT_TRUE(during->active);
     EXPECT_EQ(during->consecutive_count, 1U);
     EXPECT_EQ(during->occurrence_count, 1U);
 
-    EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::Gps,
+    EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::PrimaryGps,
                                             flight::SampleUsability::Stale, second),
               flight::RegistryStatus::Updated);
     EXPECT_TRUE(during->active);
     EXPECT_EQ(during->consecutive_count, 2U);
     EXPECT_EQ(during->occurrence_count, 2U);
     EXPECT_EQ(during->last_detected, second);
-    EXPECT_EQ(harness.find(flight::FaultType::SensorInvalid, flight::FaultSource::Gps), nullptr);
+    EXPECT_EQ(harness.find(flight::FaultType::SensorInvalid, flight::FaultSource::PrimaryGps),
+              nullptr);
 }
 
 TEST(FaultDetection, TimeErrorHoldContinuesTheStaleRecord) {
@@ -333,19 +335,19 @@ TEST(FaultDetection, TimeErrorHoldContinuesTheStaleRecord) {
     const Time first = Time{} + 1s;
     const Time held = Time{} + 2s;
     const Time second = Time{} + 3s;
-    ASSERT_EQ(harness.fdir().observe_sensor(flight::FaultSource::Gps,
+    ASSERT_EQ(harness.fdir().observe_sensor(flight::FaultSource::PrimaryGps,
                                             flight::SampleUsability::Stale, first),
               flight::RegistryStatus::Activated);
-    EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::Gps,
+    EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::PrimaryGps,
                                             flight::SampleUsability::TimeError, held),
               flight::RegistryStatus::Unchanged);
     const flight::FaultRecord<Time>* during =
-        harness.find(flight::FaultType::SensorStale, flight::FaultSource::Gps);
+        harness.find(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps);
     ASSERT_NE(during, nullptr);
     EXPECT_TRUE(during->active);
     EXPECT_EQ(during->consecutive_count, 1U);
 
-    EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::Gps,
+    EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::PrimaryGps,
                                             flight::SampleUsability::Stale, second),
               flight::RegistryStatus::Updated);
     EXPECT_EQ(during->consecutive_count, 2U);
@@ -358,16 +360,16 @@ TEST(FaultDetection, InvalidBreaksTheStaleRecord) {
     const Time stale_at = Time{} + 1s;
     const Time invalid_at = Time{} + 2s;
     const Time stale_again = Time{} + 3s;
-    ASSERT_EQ(harness.fdir().observe_sensor(flight::FaultSource::Gps,
+    ASSERT_EQ(harness.fdir().observe_sensor(flight::FaultSource::PrimaryGps,
                                             flight::SampleUsability::Stale, stale_at),
               flight::RegistryStatus::Activated);
-    EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::Gps,
+    EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::PrimaryGps,
                                             flight::SampleUsability::Invalid, invalid_at),
               flight::RegistryStatus::Activated);
     const flight::FaultRecord<Time>* stale =
-        harness.find(flight::FaultType::SensorStale, flight::FaultSource::Gps);
+        harness.find(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps);
     const flight::FaultRecord<Time>* invalid =
-        harness.find(flight::FaultType::SensorInvalid, flight::FaultSource::Gps);
+        harness.find(flight::FaultType::SensorInvalid, flight::FaultSource::PrimaryGps);
     ASSERT_NE(stale, nullptr);
     ASSERT_NE(invalid, nullptr);
     EXPECT_FALSE(stale->active);
@@ -377,7 +379,7 @@ TEST(FaultDetection, InvalidBreaksTheStaleRecord) {
     EXPECT_EQ(invalid->consecutive_count, 1U);
     EXPECT_EQ(invalid->occurrence_count, 1U);
 
-    EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::Gps,
+    EXPECT_EQ(harness.fdir().observe_sensor(flight::FaultSource::PrimaryGps,
                                             flight::SampleUsability::Stale, stale_again),
               flight::RegistryStatus::Activated);
     EXPECT_TRUE(stale->active);

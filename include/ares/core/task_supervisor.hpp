@@ -2,6 +2,7 @@
 
 #include "ares/core/periodic_task.hpp"
 
+#include <limits>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -23,6 +24,53 @@ enum class WorkerHealth : std::uint8_t { Running, Stopped, Hung, Faulted, Invali
 enum class WorkerFault : std::uint8_t { None, Exception, Unknown, Schedule, Hook };
 
 inline constexpr std::size_t kMaxSupervisorWorkers = 8;
+
+// Health posts target = generation + 1. The navigation worker, after poll
+// returns, is the only thread that stores the new generation and re-arms.
+struct NavigationRestart {
+    std::atomic<std::uint32_t> generation{0};
+    std::atomic<std::uint32_t> target{0};
+
+    [[nodiscard]] bool request() noexcept {
+        const std::uint32_t current = generation.load(std::memory_order_acquire);
+        if (current == std::numeric_limits<std::uint32_t>::max()) {
+            return false;
+        }
+        std::uint32_t expected = current;
+        return target.compare_exchange_strong(expected, current + 1U, std::memory_order_acq_rel,
+                                              std::memory_order_acquire);
+    }
+
+    // True only when generation N+1 was armed. Stop or a bad clock leaves the
+    // previous generation in place. Stop is checked again immediately before
+    // the generation store and the re-arm, which commit together.
+    template <Clock C>
+    bool handoff(PeriodicTask<C>& task, C& clock, std::stop_token stop) noexcept {
+        if (stop.stop_requested()) {
+            return false;
+        }
+        const std::uint32_t current = generation.load(std::memory_order_acquire);
+        if (current == std::numeric_limits<std::uint32_t>::max()) {
+            return false;
+        }
+        if (target.load(std::memory_order_acquire) != current + 1U) {
+            return false;
+        }
+        task.prepare_restart();
+        if (stop.stop_requested()) {
+            return false;
+        }
+        const ClockSample<typename C::time_point> sample = clock.now();
+        if (sample.status != ClockStatus::Ok) {
+            return false;
+        }
+        if (stop.stop_requested()) {
+            return false;
+        }
+        generation.store(current + 1U, std::memory_order_release);
+        return task.arm(sample.time) == ArmStatus::Armed;
+    }
+};
 
 // One worker after shutdown's grace period and the following join.
 // missed_grace: the worker was not Exited when the grace period ended.
@@ -54,7 +102,8 @@ public:
     // after any already-launched workers have been stopped and joined.
     using LaunchProbe = void (*)(std::size_t index);
 
-    explicit TaskSupervisor(C& clock, LaunchProbe launch_probe = nullptr);
+    explicit TaskSupervisor(C& clock, LaunchProbe launch_probe = nullptr,
+                            NavigationRestart* restart = nullptr);
     ~TaskSupervisor();
 
     TaskSupervisor(const TaskSupervisor&) = delete;
@@ -84,6 +133,12 @@ public:
     // Read it after the worker has exited; poll writes it from the worker thread.
     [[nodiscard]] std::optional<DeadlineRecord<C>> deadline_record(std::size_t index) const;
     [[nodiscard]] std::stop_token shutdown_token() const noexcept;
+    // False when a restart is already pending or generation cannot advance.
+    [[nodiscard]] bool request_navigation_restart() noexcept { return restart_->request(); }
+    [[nodiscard]] std::uint32_t navigation_generation() const noexcept {
+        return restart_->generation.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] NavigationRestart& navigation_restart() noexcept { return *restart_; }
 
 private:
     struct Worker {
@@ -99,13 +154,15 @@ private:
     enum class Gate : std::uint8_t { Closed, Run, Cancel };
 
     void rollback_launch(std::size_t launched);
-    void thread_main(Worker& worker, std::stop_token stop);
+    void thread_main(Worker& worker, std::stop_token stop, bool navigation);
     void note_fault(Worker& worker, WorkerFault fault) noexcept;
     [[nodiscard]] bool launched(std::size_t index) const noexcept;
     [[nodiscard]] bool pending_exit(std::size_t index) const noexcept;
 
     C& clock_;
     LaunchProbe launch_probe_{nullptr};
+    NavigationRestart owned_{};
+    NavigationRestart* restart_{&owned_};
     std::stop_source shutdown_{};
     std::mutex gate_mutex_{};
     std::condition_variable_any gate_cv_{};
@@ -115,6 +172,7 @@ private:
     bool started_{false};
     std::atomic<std::size_t> stopped_workers_{0};
     std::atomic<std::uint64_t> completed_cycles_{0};
+    std::size_t navigation_index_{kMaxWorkers};
 };
 
 extern template class TaskSupervisor<ManualClock>;

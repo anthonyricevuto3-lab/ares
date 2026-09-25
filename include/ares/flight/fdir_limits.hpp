@@ -25,8 +25,13 @@ inline constexpr std::uint32_t kDeadlineCriticalAfter{5};
 // Standby. A blocked evaluation resets the count.
 inline constexpr std::uint32_t kSafeModeRecoveryCycles{3};
 
-// Every (sensor source, sensor-health type), plus three deadline sources, plus
-// LowBattery, is 16 identities. The flight registry is that size.
-inline constexpr std::size_t kFaultRegistryCapacity{16};
+// Navigation restart executions in one recovery episode, and consecutive
+// on-time completions required from the new generation.
+inline constexpr std::uint8_t kNavigationRestartAttempts{2};
+inline constexpr std::uint8_t kRecoveryVerifyCount{3};
+
+// Five sensor sources times three sensor-health types, plus three task deadlines,
+// plus LowBattery. Primary and backup GPS are distinct identities.
+inline constexpr std::size_t kFaultRegistryCapacity{19};
 
 } // namespace ares::flight::limits

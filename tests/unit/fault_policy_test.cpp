@@ -12,7 +12,7 @@ namespace {
 void raise_warning(flight::FaultRegistry<Time, 4>& registry, std::uint32_t times) {
     for (std::uint32_t index = 0; index < times; ++index) {
         const Time time = Time{} + std::chrono::seconds{index + 1};
-        (void)registry.raise(flight::FaultType::SensorStale, flight::FaultSource::Gps,
+        (void)registry.raise(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps,
                              flight::FaultSeverity::Warning, time);
     }
 }
@@ -44,9 +44,9 @@ TEST(FaultPolicy, SingleWarningDoesNotLeaveNominal) {
         flight::evaluate_fault_policy(registry, flight::SpacecraftMode::Nominal, {});
     EXPECT_EQ(decision.action, flight::RecoveryAction::None);
     EXPECT_FALSE(decision.requested_mode.has_value());
-    EXPECT_EQ(
-        registry.find(flight::FaultType::SensorStale, flight::FaultSource::Gps)->consecutive_count,
-        1U);
+    EXPECT_EQ(registry.find(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps)
+                  ->consecutive_count,
+              1U);
 }
 
 TEST(FaultPolicy, PersistentWarningRequestsDegraded) {
@@ -95,7 +95,7 @@ TEST(FaultPolicy, CriticalRequestsSafeModeFromNominalAndDegraded) {
 TEST(FaultPolicy, RecoveryRequestsNominalOnlyFromDegraded) {
     flight::FaultRegistry<Time, 4> registry;
     raise_warning(registry, 3);
-    ASSERT_EQ(registry.clear(flight::FaultType::SensorStale, flight::FaultSource::Gps),
+    ASSERT_EQ(registry.clear(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps),
               flight::RegistryStatus::Cleared);
     ASSERT_EQ(registry.raise(flight::FaultType::DeadlineMiss, flight::FaultSource::HealthTask,
                              flight::FaultSeverity::Advisory, Time{} + 8s),
@@ -134,10 +134,10 @@ TEST(FaultPolicy, SaturatedRegistryRequestsSafeMode) {
 
 TEST(FaultPolicy, TwoNonPersistentWarningsStayNominal) {
     flight::FaultRegistry<Time, 4> registry;
-    ASSERT_EQ(registry.raise(flight::FaultType::SensorStale, flight::FaultSource::Gps,
+    ASSERT_EQ(registry.raise(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps,
                              flight::FaultSeverity::Warning, Time{} + 1s),
               flight::RegistryStatus::Activated);
-    ASSERT_EQ(registry.raise(flight::FaultType::SensorStale, flight::FaultSource::Gps,
+    ASSERT_EQ(registry.raise(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps,
                              flight::FaultSeverity::Warning, Time{} + 2s),
               flight::RegistryStatus::Updated);
     ASSERT_EQ(registry.raise(flight::FaultType::SensorInvalid, flight::FaultSource::Imu,
@@ -186,10 +186,11 @@ TEST(FaultPolicy, ClearingCriticalDoesNotReturnToNominal) {
               flight::RegistryStatus::Activated);
     ASSERT_EQ(registry.clear(flight::FaultType::LowBattery, flight::FaultSource::Battery),
               flight::RegistryStatus::Cleared);
-    ASSERT_NE(registry.find(flight::FaultType::SensorStale, flight::FaultSource::Gps), nullptr);
-    EXPECT_EQ(
-        registry.find(flight::FaultType::SensorStale, flight::FaultSource::Gps)->consecutive_count,
-        3U);
+    ASSERT_NE(registry.find(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps),
+              nullptr);
+    EXPECT_EQ(registry.find(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps)
+                  ->consecutive_count,
+              3U);
 
     const flight::PolicyDecision from_safe =
         flight::evaluate_fault_policy(registry, flight::SpacecraftMode::SafeMode, {});
@@ -215,7 +216,8 @@ TEST(FaultPolicy, ClearingOneWarningLeavesTheOtherDegraded) {
         flight::evaluate_fault_policy(registry, flight::SpacecraftMode::Degraded, {});
     EXPECT_EQ(decision.action, flight::RecoveryAction::ContinueDegraded);
     EXPECT_FALSE(decision.requested_mode.has_value());
-    EXPECT_TRUE(registry.find(flight::FaultType::SensorStale, flight::FaultSource::Gps)->active);
+    EXPECT_TRUE(
+        registry.find(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps)->active);
 }
 
 TEST(FaultPolicy, AdvisoryAloneAllowsReturnToNominal) {
@@ -230,7 +232,7 @@ TEST(FaultPolicy, AdvisoryAloneAllowsReturnToNominal) {
     ASSERT_EQ(registry.raise(flight::FaultType::DeadlineMiss, flight::FaultSource::HealthTask,
                              flight::FaultSeverity::Advisory, Time{} + 6s),
               flight::RegistryStatus::Activated);
-    ASSERT_EQ(registry.clear(flight::FaultType::SensorStale, flight::FaultSource::Gps),
+    ASSERT_EQ(registry.clear(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps),
               flight::RegistryStatus::Cleared);
     ASSERT_EQ(registry.clear(flight::FaultType::SensorInvalid, flight::FaultSource::Imu),
               flight::RegistryStatus::Cleared);
@@ -249,7 +251,7 @@ TEST(FaultPolicy, SaturationDominatesOtherFaults) {
     for (std::uint32_t index = 0; index < 3; ++index) {
         const Time time = Time{} + std::chrono::seconds{index + 1};
         const flight::RegistryStatus status =
-            registry.raise(flight::FaultType::SensorStale, flight::FaultSource::Gps,
+            registry.raise(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps,
                            flight::FaultSeverity::Warning, time);
         ASSERT_TRUE(status == flight::RegistryStatus::Activated ||
                     status == flight::RegistryStatus::Updated);

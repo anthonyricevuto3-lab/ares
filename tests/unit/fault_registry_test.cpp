@@ -25,20 +25,20 @@ TEST(FaultRegistry, RepeatedDetectionUpdatesOneRecord) {
     const Time second = Time{} + 2s;
     const Time third = Time{} + 3s;
 
-    EXPECT_EQ(registry.raise(flight::FaultType::SensorStale, flight::FaultSource::Gps,
+    EXPECT_EQ(registry.raise(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps,
                              flight::FaultSeverity::Warning, first),
               flight::RegistryStatus::Activated);
-    EXPECT_EQ(registry.raise(flight::FaultType::SensorStale, flight::FaultSource::Gps,
+    EXPECT_EQ(registry.raise(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps,
                              flight::FaultSeverity::Warning, second),
               flight::RegistryStatus::Updated);
-    EXPECT_EQ(registry.raise(flight::FaultType::SensorStale, flight::FaultSource::Gps,
+    EXPECT_EQ(registry.raise(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps,
                              flight::FaultSeverity::Warning, third),
               flight::RegistryStatus::Updated);
 
     EXPECT_EQ(registry.occupied_count(), 1U);
     EXPECT_EQ(registry.active_count(), 1U);
     const flight::FaultRecord<Time>* record =
-        find(registry, flight::FaultType::SensorStale, flight::FaultSource::Gps);
+        find(registry, flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps);
     ASSERT_NE(record, nullptr);
     EXPECT_TRUE(record->active);
     EXPECT_EQ(record->first_detected, first);
@@ -50,14 +50,14 @@ TEST(FaultRegistry, RepeatedDetectionUpdatesOneRecord) {
 TEST(FaultRegistry, DifferentSourceIsASeparateFault) {
     flight::FaultRegistry<Time, 4> registry;
     const Time time = Time{} + 1s;
-    ASSERT_EQ(registry.raise(flight::FaultType::SensorStale, flight::FaultSource::Gps,
+    ASSERT_EQ(registry.raise(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps,
                              flight::FaultSeverity::Warning, time),
               flight::RegistryStatus::Activated);
     ASSERT_EQ(registry.raise(flight::FaultType::SensorStale, flight::FaultSource::Imu,
                              flight::FaultSeverity::Warning, time),
               flight::RegistryStatus::Activated);
     EXPECT_EQ(registry.active_count(), 2U);
-    EXPECT_NE(registry.find(flight::FaultType::SensorStale, flight::FaultSource::Gps),
+    EXPECT_NE(registry.find(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps),
               registry.find(flight::FaultType::SensorStale, flight::FaultSource::Imu));
 }
 
@@ -103,13 +103,13 @@ TEST(FaultRegistry, ClearKeepsHistoryAndReactivationContinuesTheCount) {
 TEST(FaultRegistry, ActiveFaultsAreCopiedInSlotOrder) {
     flight::FaultRegistry<Time, 4> registry;
     const Time time = Time{} + 1s;
-    ASSERT_EQ(registry.raise(flight::FaultType::SensorStale, flight::FaultSource::Gps,
+    ASSERT_EQ(registry.raise(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps,
                              flight::FaultSeverity::Warning, time),
               flight::RegistryStatus::Activated);
     ASSERT_EQ(registry.raise(flight::FaultType::DeadlineMiss, flight::FaultSource::HealthTask,
                              flight::FaultSeverity::Advisory, time),
               flight::RegistryStatus::Activated);
-    ASSERT_EQ(registry.clear(flight::FaultType::SensorStale, flight::FaultSource::Gps),
+    ASSERT_EQ(registry.clear(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps),
               flight::RegistryStatus::Cleared);
 
     std::array<flight::FaultRecord<Time>, 4> active{};
@@ -125,7 +125,7 @@ TEST(FaultRegistry, FullActiveTableRejectsAndLatchesSaturation) {
     ASSERT_EQ(registry.raise(flight::FaultType::SensorStale, flight::FaultSource::Imu,
                              flight::FaultSeverity::Warning, time),
               flight::RegistryStatus::Activated);
-    ASSERT_EQ(registry.raise(flight::FaultType::SensorStale, flight::FaultSource::Gps,
+    ASSERT_EQ(registry.raise(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps,
                              flight::FaultSeverity::Warning, time),
               flight::RegistryStatus::Activated);
     EXPECT_FALSE(registry.saturated());
@@ -136,7 +136,8 @@ TEST(FaultRegistry, FullActiveTableRejectsAndLatchesSaturation) {
     EXPECT_TRUE(registry.saturated());
     EXPECT_EQ(registry.find(flight::FaultType::LowBattery, flight::FaultSource::Battery), nullptr);
     EXPECT_NE(registry.find(flight::FaultType::SensorStale, flight::FaultSource::Imu), nullptr);
-    EXPECT_NE(registry.find(flight::FaultType::SensorStale, flight::FaultSource::Gps), nullptr);
+    EXPECT_NE(registry.find(flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps),
+              nullptr);
     EXPECT_EQ(registry.active_count(), 2U);
 
     EXPECT_EQ(registry.raise(flight::FaultType::SensorInvalid, flight::FaultSource::Temperature,
@@ -154,13 +155,13 @@ TEST(FaultRegistry, InactiveSlotIsReclaimedDeterministically) {
               flight::RegistryStatus::Activated);
     ASSERT_EQ(registry.clear(flight::FaultType::SensorStale, flight::FaultSource::Imu),
               flight::RegistryStatus::Cleared);
-    EXPECT_EQ(registry.raise(flight::FaultType::SensorInvalid, flight::FaultSource::Gps,
+    EXPECT_EQ(registry.raise(flight::FaultType::SensorInvalid, flight::FaultSource::PrimaryGps,
                              flight::FaultSeverity::Warning, time + 1s),
               flight::RegistryStatus::Activated);
     EXPECT_FALSE(registry.saturated());
     EXPECT_EQ(registry.find(flight::FaultType::SensorStale, flight::FaultSource::Imu), nullptr);
     const flight::FaultRecord<Time>* replacement =
-        registry.find(flight::FaultType::SensorInvalid, flight::FaultSource::Gps);
+        registry.find(flight::FaultType::SensorInvalid, flight::FaultSource::PrimaryGps);
     ASSERT_NE(replacement, nullptr);
     EXPECT_TRUE(replacement->active);
     EXPECT_EQ(replacement->occurrence_count, 1U);
@@ -185,7 +186,7 @@ TEST(FaultRegistry, RepeatOfAnExistingFaultDoesNotNeedAFreeSlot) {
 
 TEST(FaultRegistry, ProductionCapacityAcceptsEveryLogicalIdentity) {
     constexpr std::size_t capacity = flight::limits::kFaultRegistryCapacity;
-    static_assert(capacity == 16U);
+    static_assert(capacity == 19U);
     flight::FaultRegistry<Time, capacity> registry;
 
     struct Identity {
@@ -196,9 +197,12 @@ TEST(FaultRegistry, ProductionCapacityAcceptsEveryLogicalIdentity) {
         {flight::FaultType::SensorUnavailable, flight::FaultSource::Imu},
         {flight::FaultType::SensorInvalid, flight::FaultSource::Imu},
         {flight::FaultType::SensorStale, flight::FaultSource::Imu},
-        {flight::FaultType::SensorUnavailable, flight::FaultSource::Gps},
-        {flight::FaultType::SensorInvalid, flight::FaultSource::Gps},
-        {flight::FaultType::SensorStale, flight::FaultSource::Gps},
+        {flight::FaultType::SensorUnavailable, flight::FaultSource::PrimaryGps},
+        {flight::FaultType::SensorInvalid, flight::FaultSource::PrimaryGps},
+        {flight::FaultType::SensorStale, flight::FaultSource::PrimaryGps},
+        {flight::FaultType::SensorUnavailable, flight::FaultSource::BackupGps},
+        {flight::FaultType::SensorInvalid, flight::FaultSource::BackupGps},
+        {flight::FaultType::SensorStale, flight::FaultSource::BackupGps},
         {flight::FaultType::SensorUnavailable, flight::FaultSource::Battery},
         {flight::FaultType::SensorInvalid, flight::FaultSource::Battery},
         {flight::FaultType::SensorStale, flight::FaultSource::Battery},

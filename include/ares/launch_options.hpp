@@ -27,7 +27,7 @@ struct ArgumentParse {
 };
 
 [[nodiscard]] constexpr std::string_view launch_help() noexcept {
-    return "ARES v0.4\n"
+    return "ARES v0.5\n"
            "Usage: ares [--duration-ms N] [--scenario NAME] [--seed N]\n"
            "\n"
            "Boot into Standby, accept StartMission, run three periodic tasks, and shut down.\n"

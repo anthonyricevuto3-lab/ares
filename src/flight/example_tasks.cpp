@@ -57,11 +57,29 @@ void HealthPulse<C>::operator()(typename C::time_point scheduled, std::stop_toke
 
 template <core::Clock C>
 void NavigationCadence<C>::operator()(typename C::time_point scheduled, std::stop_token stop) {
-    if (!stop.stop_requested() && imu_ != nullptr && gps_ != nullptr && clock_ != nullptr) {
+    if (!stop.stop_requested() && imu_ != nullptr && clock_ != nullptr &&
+        (gps_ != nullptr || selector_ != nullptr)) {
+        if (generation_ != nullptr) {
+            const std::uint32_t generation = generation_->load(std::memory_order_acquire);
+            if (generation != seen_generation_) {
+                solution_ = {};
+                last_usable_.reset();
+                seen_generation_ = generation;
+            }
+        }
         const auto imu = imu_->read();
-        const auto gps = gps_->read();
+        hardware::GpsSample<time_point> selected;
+        if (selector_ != nullptr) {
+            const typename GpsSelector<C>::Sample pair = selector_->read_both();
+            primary_gps_ = pair.primary;
+            backup_gps_ = pair.backup;
+            selected = pair.selected;
+        } else {
+            selected = gps_->read();
+            primary_gps_ = selected;
+        }
         const core::ClockSample<time_point> now = clock_->now();
-        solution_ = combine_navigation(imu, gps, now.status, now.time, limits_);
+        solution_ = combine_navigation(imu, selected, now.status, now.time, limits_);
         if (solution_.usability == SampleUsability::Usable) {
             last_usable_ = solution_;
         }
