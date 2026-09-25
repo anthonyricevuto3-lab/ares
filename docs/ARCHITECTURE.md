@@ -161,6 +161,10 @@ v0.7 does not add a spacecraft subsystem. It packages the frozen flight software
 
 `nav_restart` and `restart_fail` are named copies of the existing campaign schedules. They do not add a recovery action. `docs/DEMO.md` is the walkthrough. `docs/MEMORY.md` lists the fixed flight-side capacities.
 
+## v1.0 Final demonstration
+
+v1.0 does not add a subsystem, a fault family, or a recording-format change. Format 1.0 is unchanged. The application version stored in a new recording header is 1.0.0. The four canonical demonstrations are a nominal mission, GPS failover with a recording, a verified navigation restart with a recording, and a two-attempt recovery failure stopped at 6 seconds so `RecoveryFailed` is visible before the 32-entry miss log overflows. `docs/RELEASE_NOTES.md` summarizes the milestones.
+
 ## Build
 
 C++20, CMake 3.20, and Ninja. The supported compilers are GCC and Clang. MSVC is not supported because spacecraft integration uses `__int128`. On Windows, use an MSYS2 UCRT64 shell. GoogleTest 1.15.2 is fetched by URL and hash. Warnings are errors on project targets and are not applied to GoogleTest. `ARES_ENABLE_SANITIZERS` adds ASan and UBSan for Clang and GCC after a configure-time link check. The `asan-ubsan` preset turns that on for a Debug build. Sanitizers are off in `debug` and `release`. The current MSYS2 UCRT64 GCC cannot link them because the runtime libraries are absent; CI uses Clang on Ubuntu, where they are present. Format and tidy targets are `ares-format-check` and `ares-tidy`. They are not part of the default build.

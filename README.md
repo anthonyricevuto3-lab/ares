@@ -1,25 +1,21 @@
 # ARES
 
-ARES (Autonomous Resilient Embedded Spacecraft System) is a C++20 flight-software simulation. It runs a bounded, deterministic spacecraft: periodic tasks, a mode machine, fault detection, two autonomous recovery actions, and an optional binary mission recorder with an offline replay tool.
+ARES (Autonomous Resilient Embedded Spacecraft System) is a deterministic C++20 spacecraft flight-software simulator. It focuses on fault detection, bounded autonomous recovery, and post-mission replay.
 
-This repository is a systems-programming portfolio project. It is not flight-certified software, and it is not a spacecraft.
-
-## Why it exists
-
-Flight software has to stay predictable when a sensor lies, a task misses its deadline, or a log fills up. ARES is a small vehicle you can boot, fault-inject, recover, record, and replay on a desk, with the resource limits written down instead of implied.
+It models embedded-style resource limits and still runs on a developer workstation. It is not flight-certified software, and it is not a spacecraft.
 
 ## What it demonstrates
 
-- Modern C++20 systems programming and explicit concurrency
-- A deterministic simulation with a manual clock
-- Embedded-style bounded memory on the flight path
-- Fault detection, isolation, and recovery
-- Autonomous navigation restart and primary-to-backup GPS failover
-- Hardware interfaces that keep the simulator out of flight policy
-- A versioned little-endian recording and a checked replay parser
-- Warnings-as-errors, clang-tidy, and AddressSanitizer / UndefinedBehaviorSanitizer
-
-## Capabilities
+- C++20 and explicit concurrency with joined threads
+- A deterministic spacecraft simulation and hardware abstraction
+- Periodic navigation, health, and communications tasks
+- Deadline monitoring, FDIR, and SafeMode
+- Chaos fault injection that does not write flight state
+- Navigation restart and primary-to-backup GPS failover
+- Recovery that counts only after verification
+- Bounded flight-state tables
+- A binary flight recorder and a checked offline replay
+- CI, clang-format, clang-tidy, and AddressSanitizer / UndefinedBehaviorSanitizer
 
 | Version | What landed |
 | --- | --- |
@@ -31,46 +27,89 @@ Flight software has to stay predictable when a sensor lies, a task misses its de
 | 0.4 | Deterministic chaos scenarios |
 | 0.5 | Navigation restart and GPS failover, each verified before success |
 | 0.6 | Flight recorder, CRC, and `ares-replay` |
-| 0.7 | Release presets, CI, demos, install, and operator-facing output |
+| 0.7 | Release presets, CI, install, and operator-facing output |
+| 1.0 | Four canonical demonstrations of that system |
+
+The ten-minute walkthrough is [docs/DEMO.md](docs/DEMO.md). Milestone notes are [docs/RELEASE_NOTES.md](docs/RELEASE_NOTES.md).
 
 ## Architecture
 
-Simulation changes what a device returns or how long a task appears to have run. Flight software reads the hardware interfaces, publishes observations, and is the only writer of fault and recovery state. The recorder watches. It does not steer.
+Simulation changes what a device returns or how long a task appears to have run. Flight software reads hardware interfaces. The health task is the only writer of fault and recovery state. The recorder watches. It does not steer.
 
 ```mermaid
-flowchart LR
-  subgraph simulation [Simulation]
-    Chaos[Chaos engine]
-    Craft[Spacecraft model]
+flowchart TB
+  subgraph sim [Simulation]
+    Craft[SpacecraftModel]
+    Chaos[ChaosEngine]
+    Sensors[Simulated sensors]
+    Timing[Task execution timing]
+    Craft --> Sensors
+    Chaos --> Sensors
+    Chaos --> Timing
   end
   subgraph flight [Flight software]
-    Tasks[Navigation, health, comms]
-    Box[FaultMailbox]
-    Fdir[FDIR]
-    Recovery[RecoveryManager]
+    Sup[TaskSupervisor]
+    Nav[Navigation]
+    Health[Health and FDIR]
+    Power[Power and thermal]
+    Comms[Communications task]
+    Gps[GpsSelector]
+    Recov[RecoveryManager]
+    Exec[FlightExecutive]
     Mode[ModeMachine]
+    Sup --> Nav
+    Sup --> Health
+    Sup --> Comms
+    Nav --> Gps
+    Power --> Health
+    Health --> Recov
+    Health --> Exec
+    Exec --> Mode
   end
-  Chaos --> Craft
-  Craft --> Tasks
-  Tasks --> Box --> Fdir --> Recovery --> Mode
-  Tasks --> Log[EventLog]
-  Log --> Rec[FlightRecorder]
-  Rec --> Replay[ares-replay]
+  Timing --> Nav
+  Sensors -->|hardware contracts| Nav
+  Sensors -->|hardware contracts| Power
+  subgraph obs [Observation]
+    Log[EventLog]
+    Rec[FlightRecorder]
+    Replay[ares-replay]
+    Log --> Rec --> Replay
+  end
+  Health -->|typed events| Log
+  Mode -->|typed events| Log
 ```
 
-The contracts are in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/FAULT_MODEL.md](docs/FAULT_MODEL.md), [docs/RECOVERY.md](docs/RECOVERY.md), [docs/CHAOS_ENGINE.md](docs/CHAOS_ENGINE.md), [docs/FLIGHT_RECORDER.md](docs/FLIGHT_RECORDER.md), and [docs/REPLAY.md](docs/REPLAY.md).
+Contracts: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/FAULT_MODEL.md](docs/FAULT_MODEL.md), [docs/RECOVERY.md](docs/RECOVERY.md), [docs/CHAOS_ENGINE.md](docs/CHAOS_ENGINE.md), [docs/FLIGHT_RECORDER.md](docs/FLIGHT_RECORDER.md), and [docs/REPLAY.md](docs/REPLAY.md).
 
-## Design rules
+## Resilience
 
-- The simulation is deterministic. Flight logic does not read the wall clock.
-- Flight-path tables are fixed capacity. A full registry or recorder keeps a defined prefix.
-- The health task is the only writer of the fault registry and of recovery progress.
-- Faults and recoveries use typed identities, not strings.
-- Workers are `std::jthread`s owned by the supervisor. Nothing is detached.
-- Recovery success is verified. A restart or a failover is not success by itself.
-- Chaos does not write faults or request modes.
-- The recorder is an observer. A recording failure does not change a flight decision.
-- Replay keeps file order. Sequence is the total order. A later record may carry an earlier logical timestamp.
+A sensor fault:
+
+Chaos freezes the primary GPS, freshness reports stale, FDIR records a persistent warning, the mode becomes Degraded, recovery isolates the primary and selects the backup, three usable backup samples verify the switch, and the mode returns to Nominal. Selection stays on the backup.
+
+A task fault:
+
+Chaos adds navigation delay, the deadline monitor records misses, FDIR escalates to Critical and SafeMode, recovery restarts the same worker, the generation changes, three on-time completions verify the restart, and SafeMode returns to Standby. A delay that outlasts both attempts ends in `RecoveryFailed`. There is no third attempt.
+
+## Determinism
+
+Tests use `ManualClock`, an explicit mission seed, SplitMix64 sensor streams, and fixed chaos schedules. The flight recorder orders records by sequence. Replay parses that order and does not sort by timestamp.
+
+The `ares` executable uses the host steady clock. Two process runs are not byte-identical. A loaded machine can add deadline misses that a manual-clock campaign does not.
+
+## Resource bounds
+
+Flight-state structures are bounded. That is not a claim that the whole process never allocates. Logging formats a line when it emits, and replay may allocate offline. Capacities:
+
+| Structure | Capacity |
+| --- | --- |
+| FaultRegistry | 19 |
+| Chaos schedule | 16 |
+| FlightRecorder | 256 |
+| EventLog | 64 |
+| Deadline-miss history | 32 |
+
+The full table is [docs/MEMORY.md](docs/MEMORY.md).
 
 ## Quick start
 
@@ -84,9 +123,7 @@ ctest --preset debug --output-on-failure
 ./build/debug/ares --list-scenarios
 ```
 
-On Windows the binaries are `ares.exe` and `ares-replay.exe`. A release build uses `--preset release` and `build/release`. The interview walkthrough is [docs/DEMO.md](docs/DEMO.md). Tool versions and the format/tidy/sanitizer commands are in [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Run
+On Windows the binaries are `ares.exe` and `ares-replay.exe`. A release build uses `--preset release` and `build/release`. Toolchain and check commands are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ```text
 ares [--duration-ms N] [--scenario NAME] [--seed N] [--record FILE]
@@ -96,31 +133,27 @@ ares-replay [--verify] [--summary] FILE
 
 `--duration-ms` defaults to 250. `--scenario` defaults to `nominal`. `--seed` defaults to 0. Named scenarios use zero measurement noise. Omit `--record` and nothing is written. `--record` truncates the destination before boot.
 
-A finished mission prints one summary. It has no wall-clock stamp, process id, or pointer. Fault and recovery counts are the events still held in the bounded event log.
-
 ## Scenarios
 
 `nominal`, `gps_stale`, `gps_unavailable`, `imu_invalid`, `low_battery`, `deadline_storm`, `mixed_faults`, `nav_restart`, and `restart_fail`.
 
-`gps_stale` is the GPS failover demonstration. `nav_restart` is the successful navigation restart. `restart_fail` holds the delay through both attempts and stays in SafeMode. `deadline_storm` is the shorter delay and is unchanged from v0.4.
+`gps_stale` is the GPS failover demonstration. `nav_restart` and `restart_fail` are demonstration names for delay injections that already existed in the campaign tests. A host run of `nav_restart` does not always reach the restart; [docs/DEMO.md](docs/DEMO.md) describes that timing caveat. `deadline_storm` remains the 4-second delay from v0.4.
 
-## Autonomous recovery
+Navigation may be restarted at most twice in one episode, on the same worker. Success is three consecutive on-time completions from the new generation. Primary GPS can fail over to backup once. Success is three usable backup samples after the switch. There is no automatic return to primary.
 
-Navigation may be restarted at most twice in one episode, on the same worker. Success is three consecutive on-time completions from the new generation. Primary GPS can fail over to backup once. Success is three usable backup samples after the switch. There is no automatic return to primary. A failed GPS recovery stays failed for that mission.
+The recording format is 1.0. Replay checks that format version, not the application version stored in the header. `ares-replay` does not restore C++ objects or run the tasks again.
 
-## Flight recorder
+## Quality
 
-The recording format is 1.0: a 64-byte header, a 20-byte record prefix, explicit little-endian fields, and CRC32 over the record, the stream, and the header. The header also stores the ARES version that wrote the file. Replay checks the format version, not that application version. `ares-replay` validates the bytes and prints a timeline. It does not restore C++ objects or run the tasks again.
+The suite is GoogleTest, discovered by CTest, with `unit` and `integration` labels plus `fault`, `recovery`, `recorder`, `replay`, and `smoke`. Campaign tests repeat the same manual-clock mission and compare the result. Project code is built with warnings as errors. `ares-format-check` and `ares-tidy` run clang-format and clang-tidy. The `asan-ubsan` preset enables AddressSanitizer and UndefinedBehaviorSanitizer and is not linked into `debug` or `release`.
 
-## Testing
+GitHub Actions runs Linux Debug, Linux Release, Linux ASan/UBSan, and Windows UCRT64 Debug. ThreadSanitizer is not in that workflow. The WSL environment used during development aborts it before any test, so it is not reported as passed.
 
 ```sh
 ctest --preset debug --output-on-failure
 ctest --test-dir build/debug -L unit --output-on-failure
 ctest --test-dir build/debug -L integration --output-on-failure
 ```
-
-Labels also include `fault`, `recovery`, `recorder`, `replay`, and `smoke`. Each test has a 60-second timeout.
 
 ## Exit codes
 
@@ -146,26 +179,21 @@ A recovery failure does not by itself change the process exit code.
 cmake --install build/release --prefix /tmp/ares
 ```
 
-That installs `ares`, `ares-replay`, and the design docs. `cpack -G TGZ` or `cpack -G ZIP` from the release build directory packs the same install set.
-
-## Repository
-
-`include/ares` and `src` hold core, flight, simulation, recorder, and the composition root. `tests/unit` and `tests/integration` are the suite. `docs` holds the contracts. `scripts` holds the four demos.
+That installs `ares`, `ares-replay`, and the design docs. From the release build directory, `cpack -G TGZ` or `cpack -G ZIP` packs the same install set. The package does not contain the test binary or object files. Windows binaries are built for MSYS2 UCRT64 and the ZIP is not standalone: `libstdc++-6.dll`, `libgcc_s_seh-1.dll`, and `libwinpthread-1.dll` must be on `PATH`. A UCRT64 shell already provides them.
 
 ## Known limits
 
 - Deadline checks on the host clock describe desktop scheduling, not a real-time executive.
-- The `ares` executable uses the host steady clock, so two process runs are not byte-identical. Manual-clock campaigns are.
 - Communications dropout is not implemented.
 - There is no GPS failback, checkpoint rollback, or process restart.
-- The event log and the recorder are separate bounded histories. One can drop an event the other still holds.
+- The event log and the recorder are separate bounded histories.
 - Scenario names longer than 15 characters are truncated in the recording header. The shipped names fit.
-- ThreadSanitizer is not part of CI. The supported Linux environment used during development aborts it before any test.
-- MSVC is unsupported.
+- MSVC is unsupported. Windows binaries need the UCRT64 runtime DLLs on `PATH`.
 
 ## Documents
 
 - [docs/DEMO.md](docs/DEMO.md)
+- [docs/RELEASE_NOTES.md](docs/RELEASE_NOTES.md)
 - [docs/PRODUCT_SPEC.md](docs/PRODUCT_SPEC.md)
 - [docs/ROADMAP.md](docs/ROADMAP.md)
 - [docs/MEMORY.md](docs/MEMORY.md)

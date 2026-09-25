@@ -38,7 +38,7 @@ TEST(LaunchOptions, HelpDoesNotRequireAProgramName) {
     const ares::ArgumentParse parsed = parse({"--help"});
     EXPECT_EQ(parsed.status, ares::ArgumentStatus::Help);
     EXPECT_NE(parsed.message.find("Usage:"), std::string::npos);
-    EXPECT_NE(parsed.message.find("ARES v0.7.0"), std::string::npos);
+    EXPECT_NE(parsed.message.find("ARES v1.0.0"), std::string::npos);
     EXPECT_NE(parsed.message.find("--list-scenarios"), std::string::npos);
 }
 

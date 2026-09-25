@@ -10,13 +10,17 @@
 - **v0.4** Deterministic chaos engine and named scenarios.
 - **v0.5** Autonomous navigation restart and primary-to-backup GPS failover.
 - **v0.6** Bounded flight recorder, format 1.0, and `ares-replay`.
+- **v0.7** Release hardening: presets, CI, demos, install, and operator-facing output.
 
 ## Current
 
-**v0.7** Release hardening: debug and release presets, an ASan/UBSan preset, CI, scenario listing, a mission summary, demo scripts, install and package rules, and the documents a reviewer needs. No new flight subsystem.
+**v1.0** Final demonstration of that system. Four canonical missions, record and replay, and the documents a reviewer needs. No new spacecraft subsystem.
 
-## Next
+## Future work
 
-**v1.0** A final demonstration release of the behavior frozen above: the same recovery actions, the same recorder, and a documented mission a reviewer can run from a clean build.
+Not part of v1.0, and not scheduled:
 
-Communications dropout, automatic GPS failback, and checkpoint rollback are not scheduled. They stay out of the product until a later milestone defines them.
+- communications dropout
+- automatic GPS failback
+- checkpoint rollback
+- hardware-in-the-loop

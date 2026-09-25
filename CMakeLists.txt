@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(ARES
-    VERSION 0.7.0
+    VERSION 1.0.0
     DESCRIPTION "Autonomous Resilient Embedded Spacecraft System"
     LANGUAGES CXX
 )
@@ -211,6 +211,7 @@ install(FILES
     README.md
     CONTRIBUTING.md
     docs/DEMO.md
+    docs/RELEASE_NOTES.md
     docs/ARCHITECTURE.md
     docs/PRODUCT_SPEC.md
     docs/ROADMAP.md

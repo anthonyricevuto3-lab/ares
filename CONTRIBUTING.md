@@ -74,6 +74,8 @@ cmake --install build/release --prefix "$PWD/build/install"
 cpack --config build/release/CPackConfig.cmake -G TGZ
 ```
 
+Windows release binaries need the UCRT64 runtime on `PATH`: `libstdc++-6.dll`, `libgcc_s_seh-1.dll`, and `libwinpthread-1.dll`. The package does not bundle those DLLs.
+
 ## What not to add casually
 
 Communications simulation, new recovery actions, GPS failback, checkpoint rollback, and a user interface are out of scope until a milestone says otherwise. The frozen behavior in v0.1 through v0.6 stays unless a change is an intentional, tested contract update.

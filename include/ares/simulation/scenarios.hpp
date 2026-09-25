@@ -89,8 +89,8 @@ inline constexpr ScenarioInfo kScenarioInfo[] = {
     {"low_battery", "Battery voltage drops below the safe-mode threshold, then restores."},
     {"deadline_storm", "Navigation delay long enough to escalate, then the fault clears."},
     {"mixed_faults", "Overlapping GPS freeze and low battery."},
-    {"nav_restart", "Short navigation delay. One restart verifies and returns to Standby."},
-    {"restart_fail", "Held navigation delay. Both restart attempts fail in SafeMode."},
+    {"nav_restart", "Demo of the existing delay injection. One restart verifies, then Standby."},
+    {"restart_fail", "Demo of the existing delay injection. Both restarts fail. No third attempt."},
 };
 
 [[nodiscard]] constexpr bool scenario_catalog_matches() noexcept {

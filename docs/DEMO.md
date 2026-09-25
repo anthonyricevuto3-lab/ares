@@ -1,76 +1,83 @@
-# Demonstrating ARES
+# ARES v1.0 demonstration
 
-Build the release preset first. The scripts look for `build/release/ares` or `build/release/ares.exe`.
+A reviewer can walk through this in about ten minutes after a release build. The four demos use the frozen flight software. They do not add a fault family or a recovery action.
+
+## Prerequisites
+
+CMake 3.20 or newer, Ninja, and GCC or Clang with C++20 and `__int128`. On Windows, use an MSYS2 UCRT64 shell. MSVC is not supported. Commands below assume the repository root.
+
+## Build
 
 ```sh
 cmake --preset release
 cmake --build --preset release
 ```
 
-The `ares` process uses the host steady clock. The schedules below are deterministic in ARES time, but a loaded machine can add extra deadline misses. The campaign tests under `ctest -L integration` are the manual-clock oracle and do not depend on wall time.
+Windows binaries are `build/release/ares.exe` and `build/release/ares-replay.exe`. One command for all four demos:
 
-Each demo prints a summary with no timestamps, process ids, or addresses. Look at `final_mode`, `active_gps`, `navigation_generation`, `recovery_successes`, `recovery_failures`, and `exit`.
+```sh
+sh scripts/demo_v1.sh
+```
 
-## Demo 1 — Nominal
+```powershell
+.\scripts\demo_v1.ps1
+```
+
+Set `ARES` and `REPLAY` to installed binaries if you are not using `build/release`. Recordings are written under `build/` unless `RECORD_DIR` is set. They are not part of the repository.
+
+The `ares` process uses the host steady clock. The schedules are deterministic in ARES time. A loaded machine can add deadline misses. The manual-clock campaign tests are the oracle.
+
+## Demo 1: Nominal
 
 ```sh
 ./build/release/ares --scenario nominal --seed 1 --duration-ms 1000
 ```
 
-Or `scripts/demo_nominal.sh` / `scripts/demo_nominal.ps1`.
+Proves a clean boot and a quiet mission. Look for `Boot -> Initialization -> Standby -> Nominal`, `final_mode: Nominal`, `active_gps: primary`, `navigation_generation: 0`, no recovery, and `exit: Success`.
 
-Look for `scenario: nominal`, `final_mode: Nominal`, `active_gps: primary`, `navigation_generation: 0`, `recording: disabled`, and `exit: Success`. Boot lines show `Boot -> Initialization -> Standby` and then `Standby -> Nominal`.
-
-## Demo 2 — GPS failover
-
-```sh
-./build/release/ares --scenario gps_stale --seed 42 --duration-ms 12000
-```
-
-The primary GPS freezes at 5 seconds for 4 seconds. Health should enter Degraded, select the backup, and verify it.
-
-Look for `active_gps: backup`, `recovery_successes: 1` or more, and `exit: Success`. The mode log contains `Nominal -> Degraded` and a later return toward Nominal once the primary warning is isolated and verified.
-
-## Demo 3 — Navigation restart
-
-```sh
-./build/release/ares --scenario nav_restart --seed 1 --duration-ms 8000
-```
-
-A 150 ms navigation delay lasts 1 second. The deadline escalates, the task restarts on the same worker, and three on-time completions verify the new generation.
-
-Look for `navigation_generation: 1` or greater, `recovery_successes` at least 1, `final_mode: Standby`, and `exit: Success`.
-
-## Demo 4 — Recovery failure
-
-```sh
-./build/release/ares --scenario restart_fail --seed 1 --duration-ms 20000
-```
-
-The same delay is held for 30 seconds, so both restart attempts fail before the injection ends.
-
-Look for `recovery_failures` at least 1, `navigation_generation: 2`, and `final_mode: SafeMode`. Recovery failure does not by itself change the process exit. On the host clock this run also fills the 32-entry deadline-miss log, so the process can exit `FaultHistoryOverflow` (9). That code is the miss history, and the summary still shows the failed recovery.
-
-## Record and replay
+## Demo 2: GPS autonomous recovery
 
 ```sh
 ./build/release/ares --scenario gps_stale --seed 42 --duration-ms 12000 --record build/demo-gps.bin
-./build/release/ares-replay build/demo-gps.bin
 ./build/release/ares-replay --verify build/demo-gps.bin
 ```
 
-`ares-replay` should exit 0 and print `valid` for `--verify`. The timeline is in file order. Expect a mission start, a chaos edge, a fault activation, `RecoveryStarted`, a backup selection, `RecoverySucceeded`, and a mission end. Two host-clock recordings of this demo are not required to be byte-identical. A manual-clock campaign of `gps_stale` is.
+The primary GPS freezes at 5 seconds for 4 seconds. Freshness turns that into a persistent warning. The spacecraft enters Degraded, isolates the primary, selects the backup, and verifies three usable backup samples. It returns to Nominal and stays on the backup. There is no automatic failback.
 
-`recording: written` in the mission summary means the file was committed. `exit: RecorderFailed` means the flight result was success and the recording operation was not. A flight failure is never replaced by that code.
+Proves detection, isolation, redundancy, and verified recovery. Expect process exit 0 and `valid` from replay. The timeline should contain a fault activation, `RecoveryStarted`, the backup selection, and `RecoverySucceeded`.
 
-## Scripts
+## Demo 3: Navigation autonomous restart
 
-| Script | Scenario | Duration |
-| --- | --- | --- |
-| `scripts/demo_nominal.sh` | nominal | 1 s |
-| `scripts/demo_gps_failover.sh` | gps_stale | 12 s |
-| `scripts/demo_task_restart.sh` | nav_restart | 8 s |
-| `scripts/demo_recovery_failure.sh` | restart_fail | 20 s |
-| `scripts/demo_record_replay.sh` | gps_stale, then replay | 12 s |
+```sh
+./build/release/ares --scenario nav_restart --seed 1 --duration-ms 8000 --record build/demo-nav.bin
+./build/release/ares-replay --verify build/demo-nav.bin
+```
 
-PowerShell copies use the `.ps1` suffix and the same arguments.
+A 150 ms navigation delay lasts 1 second. When the host completes that window, deadline misses escalate through Advisory and Warning to Critical, then SafeMode. The same worker restarts navigation. Generation moves from 0 to 1. After the delay ends, three on-time completions verify the restart, the deadline fault clears, and SafeMode returns to Standby.
+
+`nav_restart` uses the host steady clock. That 1-second window has produced both the expected generation-1 verified restart and a normal generation-0 completion on some host-scheduled runs. Process exit 0 and a valid replay are not enough. `scripts/demo_nav_restart.sh` and `scripts/demo_nav_restart.ps1` succeed only when the process exit is 0, the summary lines are exactly `navigation_generation: 1`, `recovery_successes: 1`, and `recovery_failures: 0`, and `ares-replay --verify` exits 0. Generation 0 or `recovery_successes: 0` fails the wrapper with "Navigation restart was not observed on this host/run." That is a failed demonstration run because of host scheduling, not a flight-software failure and not evidence that ARES crashed or violated the recovery design. The wrapper does not retry and does not lengthen the run. The host demo is not perfectly deterministic.
+
+## Demo 4: Bounded recovery failure
+
+```sh
+./build/release/ares --scenario restart_fail --seed 1 --duration-ms 6000
+```
+
+The same delay is held for 30 seconds, longer than this run. Both restart attempts fail verification. There is no third attempt. The final mode stays SafeMode.
+
+6000 ms is the canonical tested duration used for the v1.0 release demo on the validation host. It is not a mathematical guarantee. 5000 ms did not always reach `RecoveryFailed`. 5500 ms did reach it in several probes. 6000 ms was chosen to provide additional margin. On that host the summary showed `recovery_failures: 1`, `navigation_generation: 2`, SafeMode, and about 27 of 32 miss-log entries. The process exit was Success. Recovery failure does not by itself change the process exit code.
+
+Host steady-clock scheduling can change how many cycles complete. On another host, 6000 ms fails the demo check if `RecoveryFailed` has not occurred yet. A sufficiently long run can instead fill the 32-entry miss history after `RecoveryFailed` and exit `FaultHistoryOverflow` (9). That code is the bounded history. The recovery cap is still two attempts. `scripts/demo_v1` and `scripts/demo_recovery_failure` accept process exit 0 or 9 only when the summary line is `recovery_failures: 1`. The wrapper then exits 0 and prints which process result occurred. A missing summary or any other process exit fails the wrapper.
+
+## What each demo proves
+
+| Demo | Story |
+| --- | --- |
+| Nominal | Boot, three tasks, primary GPS, no recovery |
+| GPS | Chaos condition, freshness, Degraded, backup, verification, Nominal |
+| Navigation | Deadline escalation, SafeMode, restart, generation, Standby |
+| Failure | Two attempts, then stop. No infinite restart |
+
+## Known caveats
+
+Host-clock recordings of the same scenario are not byte-identical. Manual-clock campaigns are. Replay checks the bytes it can read. It does not run the tasks again. Communications dropout, GPS failback, and checkpoint rollback are not in this demonstration.

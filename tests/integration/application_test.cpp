@@ -50,7 +50,7 @@ TEST(Application, ZeroDurationBootsAndShutsDown) {
     EXPECT_NE(text.find("Standby -> Nominal"), std::string::npos);
     EXPECT_NE(text.find("shutdown complete"), std::string::npos);
     EXPECT_NE(text.find("miss_overwrites=0"), std::string::npos);
-    EXPECT_NE(text.find("ARES 0.7.0\n"), std::string::npos);
+    EXPECT_NE(text.find("ARES 1.0.0\n"), std::string::npos);
     EXPECT_NE(text.find("scenario: nominal\n"), std::string::npos);
     EXPECT_NE(text.find("seed: 0\n"), std::string::npos);
     EXPECT_NE(text.find("final_mode: Nominal\n"), std::string::npos);

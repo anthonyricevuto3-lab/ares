@@ -1,6 +1,6 @@
 # ARES product specification
 
-ARES is a desktop simulation of a small flight-software stack. The product is the `ares` and `ares-replay` programs, the named scenarios, and the contracts in `docs/`.
+ARES 1.0.0 is a desktop simulation of a small flight-software stack. The product is the `ares` and `ares-replay` programs, nine named scenarios, and the contracts in `docs/`. v1.0 demonstrates that stack. It does not add a subsystem.
 
 ## Problem
 
@@ -36,4 +36,4 @@ The simulator implements hardware interfaces. It does not write the fault regist
 
 ## Known limitations
 
-Host-clock runs can miss deadlines that a manual-clock test does not. The event log can overwrite older events while the recorder still holds its copy. Scenario names in the file header are at most 15 characters. Replay does not re-execute the mission.
+Host-clock runs can miss deadlines that a manual-clock test does not. A `restart_fail` run long enough to keep missing after `RecoveryFailed` can exit 9 because the miss log holds 32 entries. The event log can overwrite older events while the recorder still holds its copy. Scenario names in the file header are at most 15 characters. Replay does not re-execute the mission. Communications dropout, GPS failback, and checkpoint rollback are not implemented.
