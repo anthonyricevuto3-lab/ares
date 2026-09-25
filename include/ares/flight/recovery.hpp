@@ -89,9 +89,9 @@ private:
 
     void publish(core::EventLog<SystemEvent<TimePoint>>& events, TimePoint time,
                  SubsystemAction action, RecoveryTarget target, std::uint8_t attempt,
-                 std::uint32_t generation) {
+                 std::uint32_t generation, RecoveryNotice notice = RecoveryNotice::Started) {
         (void)events.publish(SystemEvent<TimePoint>{
-            RecoveryEvent<TimePoint>{action, target, attempt, generation, time}});
+            RecoveryEvent<TimePoint>{action, target, attempt, generation, time, notice}});
     }
 
     void observe_navigation(const NavigationRecoveryFact& fact, TimePoint time,
@@ -107,7 +107,7 @@ private:
             if (fact.generation == std::numeric_limits<std::uint32_t>::max()) {
                 navigation_.state = RecoveryState::Failed;
                 publish(events, time, SubsystemAction::RestartTask, RecoveryTarget::NavigationTask,
-                        0, fact.generation);
+                        0, fact.generation, RecoveryNotice::Failed);
                 return;
             }
             navigation_.state = RecoveryState::Executing;
@@ -137,7 +137,7 @@ private:
             fact.on_time_run >= limits::kRecoveryVerifyCount) {
             navigation_.state = RecoveryState::Succeeded;
             publish(events, time, SubsystemAction::RestartTask, RecoveryTarget::NavigationTask,
-                    navigation_.attempts, navigation_.generation);
+                    navigation_.attempts, navigation_.generation, RecoveryNotice::Succeeded);
             return;
         }
         if (!five_new_misses(fact.consecutive, navigation_.baseline) || !fact.active) {
@@ -147,7 +147,7 @@ private:
             fact.generation == std::numeric_limits<std::uint32_t>::max()) {
             navigation_.state = RecoveryState::Failed;
             publish(events, time, SubsystemAction::RestartTask, RecoveryTarget::NavigationTask,
-                    navigation_.attempts, navigation_.generation);
+                    navigation_.attempts, navigation_.generation, RecoveryNotice::Failed);
             return;
         }
         navigation_.state = RecoveryState::Executing;
@@ -175,12 +175,14 @@ private:
         }
         if (fact.backup_usable_run >= limits::kRecoveryVerifyCount) {
             gps_.state = RecoveryState::Succeeded;
-            publish(events, time, SubsystemAction::SwitchSensor, RecoveryTarget::BackupGps, 1, 0);
+            publish(events, time, SubsystemAction::SwitchSensor, RecoveryTarget::BackupGps, 1, 0,
+                    RecoveryNotice::Succeeded);
             return;
         }
         if (fact.backup_unusable_run >= limits::kRecoveryVerifyCount) {
             gps_.state = RecoveryState::Failed;
-            publish(events, time, SubsystemAction::SwitchSensor, RecoveryTarget::BackupGps, 1, 0);
+            publish(events, time, SubsystemAction::SwitchSensor, RecoveryTarget::BackupGps, 1, 0,
+                    RecoveryNotice::Failed);
         }
     }
 

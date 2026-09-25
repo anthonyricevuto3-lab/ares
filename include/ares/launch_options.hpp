@@ -16,6 +16,7 @@ struct LaunchOptions {
     core::Duration run_for{std::chrono::milliseconds{250}};
     std::string scenario{"nominal"};
     std::uint64_t seed{0};
+    std::string record_path{};
 };
 
 enum class ArgumentStatus { Ok, Help, Error };
@@ -27,8 +28,8 @@ struct ArgumentParse {
 };
 
 [[nodiscard]] constexpr std::string_view launch_help() noexcept {
-    return "ARES v0.5\n"
-           "Usage: ares [--duration-ms N] [--scenario NAME] [--seed N]\n"
+    return "ARES v0.6\n"
+           "Usage: ares [--duration-ms N] [--scenario NAME] [--seed N] [--record FILE]\n"
            "\n"
            "Boot into Standby, accept StartMission, run three periodic tasks, and shut down.\n"
            "The default scenario is nominal: no injected fault conditions.\n"
@@ -37,6 +38,7 @@ struct ArgumentParse {
            "--scenario NAME   nominal, gps_stale, gps_unavailable, imu_invalid,\n"
            "                  low_battery, deadline_storm, or mixed_faults.\n"
            "--seed N          Mission noise seed (default 0). Scenarios use zero noise.\n"
+           "--record FILE     Write a binary mission recording. Omit to record nothing.\n"
            "--help            Show this help.\n";
 }
 
@@ -50,6 +52,7 @@ struct ArgumentParse {
     bool saw_duration = false;
     bool saw_scenario = false;
     bool saw_seed = false;
+    bool saw_record = false;
     while (cursor != args.end()) {
         const std::string_view arg = *cursor;
         if (arg == "--help" || arg == "-h") {
@@ -133,6 +136,23 @@ struct ArgumentParse {
             }
             parsed.options.seed = seed;
             saw_seed = true;
+            ++cursor;
+            continue;
+        }
+        if (arg == "--record") {
+            if (saw_record) {
+                parsed.status = ArgumentStatus::Error;
+                parsed.message = "duplicate --record";
+                return parsed;
+            }
+            ++cursor;
+            if (cursor == args.end() || cursor->empty()) {
+                parsed.status = ArgumentStatus::Error;
+                parsed.message = "missing value for --record";
+                return parsed;
+            }
+            parsed.options.record_path = std::string(*cursor);
+            saw_record = true;
             ++cursor;
             continue;
         }

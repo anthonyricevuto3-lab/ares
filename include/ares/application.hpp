@@ -21,6 +21,9 @@ enum class ExitCode : int {
     TimeError = 8,
     // Deadline-miss history overwrote an older miss. Cycle-log overflow is not this.
     FaultHistoryOverflow = 9,
+    // The mission ran, but the optional recording could not be opened, finished,
+    // or kept the ordered prefix only. Flight decisions are unchanged.
+    RecorderFailed = 10,
 };
 
 // Test injection for ares::run. Not a command-line flag. None is the flight path.

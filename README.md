@@ -1,8 +1,12 @@
 # ARES
 
-ARES (Autonomous Resilient Embedded Spacecraft System) is a C++20 flight-software simulation, version 0.5.0. It boots a spacecraft mode machine, runs three periodic tasks, flies a small digital spacecraft, detects a closed set of faults, and can recover in two ways: restart the navigation task inside its existing thread, or fail over from a primary GPS to a backup GPS.
+ARES (Autonomous Resilient Embedded Spacecraft System) is a C++20 flight-software simulation, version 0.6.0. It boots a spacecraft mode machine, runs three periodic tasks, flies a small digital spacecraft, detects a closed set of faults, and can recover in two ways: restart the navigation task inside its existing thread, or fail over from a primary GPS to a backup GPS. An optional flight recorder writes a versioned binary mission history. `ares-replay` reads that file offline.
 
 This is not certified real-time flight software. Deadline checks on the operating-system clock describe desktop scheduling behavior. A recovery failure keeps the vehicle conservative. It does not by itself change the process exit code.
+
+## What 0.6 adds
+
+`--record FILE` asks the mission to keep a bounded binary history. The default is no file. The recorder watches events the flight software already publishes. It does not select a sensor, restart a task, or change a mode. A recording failure is exit code 10 when the flight itself succeeded. `ares-replay FILE` prints the timeline and a summary. `--verify` and `--summary` are the short forms. `docs/FLIGHT_RECORDER.md` and `docs/REPLAY.md` describe the format.
 
 ## What 0.5 does
 
@@ -26,7 +30,12 @@ ctest --preset debug
 .\build\debug\ares.exe --duration-ms 250
 ```
 
-`--duration-ms` defaults to 250. `--scenario` selects a named schedule (`nominal` by default). `--seed` sets the mission noise seed. `--help` prints usage.
+`--duration-ms` defaults to 250. `--scenario` selects a named schedule (`nominal` by default). `--seed` sets the mission noise seed. `--record FILE` writes a mission recording. `--help` prints usage.
+
+```powershell
+.\build\debug\ares.exe --scenario gps_stale --seed 42 --record mission.bin
+.\build\debug\ares-replay.exe mission.bin
+```
 
 Debug sanitizers (ASan and UBSan, or MSVC ASan) are a separate preset. GitHub Actions runs that preset with Clang on Ubuntu. MSYS2 UCRT64 GCC does not ship `libasan` or `libubsan`, so the preset stops at configure time on that toolchain.
 
@@ -40,7 +49,7 @@ Configuration downloads pinned GoogleTest 1.15.2.
 
 ## Layout
 
-`src/core` is infrastructure: clock, log, events, periodic tasks, and thread lifetime. `src/flight` is the mode machine, fault handling, recovery, and the three tasks. `src/simulation` is the spacecraft, sensors, and chaos engine. The executable composes them. Flight code does not depend on the simulator: GPS selection uses the `IGps` interface.
+`src/core` is infrastructure: clock, log, events, periodic tasks, and thread lifetime. `src/flight` is the mode machine, fault handling, recovery, and the three tasks. `src/simulation` is the spacecraft, sensors, and chaos engine. `src/recorder` is the binary format and `ares-replay`. The executable composes them. Flight code does not depend on the simulator: GPS selection uses the `IGps` interface.
 
 ## Checks
 

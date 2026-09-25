@@ -12,6 +12,7 @@
 #include "ares/flight/sample_limits.hpp"
 #include "ares/flight/thermal_monitor.hpp"
 #include "ares/launch_options.hpp"
+#include "ares/recorder/flight_recorder.hpp"
 #include "ares/simulation/chaos_engine.hpp"
 #include "ares/simulation/scenarios.hpp"
 #include "ares/simulation/sensors.hpp"
@@ -99,6 +100,8 @@ struct MissionRuntime {
     // Workers publish observations. Only the health task mutates the registry.
     flight::FaultMailbox<core::SteadyClock> fault_mailbox_;
     flight::FdirController<core::SteadyClock> fdir_;
+    recorder::FlightRecorder<> recorder_{};
+    std::uint32_t recorded_generation_{0};
     core::TaskSupervisor<core::SteadyClock> supervisor_;
 };
 
@@ -114,6 +117,40 @@ struct MissionRuntime {
         return flight::FaultSource::CommunicationsTask;
     }
     return std::nullopt;
+}
+
+void on_recorded_event(const flight::SystemEvent<core::SteadyClock::time_point>* event,
+                       void* context) {
+    if (event == nullptr || context == nullptr) {
+        return;
+    }
+    recorder::absorb(*static_cast<recorder::FlightRecorder<>*>(context), *event);
+}
+
+void on_chaos_edge(const simulation::ChaosEdge& edge, core::SteadyClock::time_point when,
+                   void* context) {
+    if (context == nullptr) {
+        return;
+    }
+    (void)static_cast<recorder::FlightRecorder<>*>(context)->record_chaos(
+        edge, when.time_since_epoch().count());
+}
+
+[[nodiscard]] int finish_mission(MissionRuntime& runtime, ExitCode code) {
+    if (!runtime.recorder_.enabled()) {
+        return to_int(code);
+    }
+    const core::ClockSample<core::SteadyClock::time_point> now = runtime.clock_.now();
+    const std::int64_t stamp =
+        now.status == core::ClockStatus::Ok ? now.time.time_since_epoch().count() : 0;
+    (void)runtime.recorder_.seal(stamp, static_cast<std::uint8_t>(runtime.executive_.mode()),
+                                 to_int(code));
+    const bool wrote = runtime.recorder_.commit();
+    if (code == ExitCode::Success &&
+        (!wrote || runtime.recorder_.io_error() || runtime.recorder_.overflowed())) {
+        return to_int(ExitCode::RecorderFailed);
+    }
+    return to_int(code);
 }
 
 void publish_navigation_observation(MissionRuntime& runtime) {
@@ -159,6 +196,13 @@ void evaluate_fdir(MissionRuntime& runtime, std::stop_token stop) {
     }
     if (command.failover_to_backup) {
         runtime.selector_.failover_to_backup();
+        if (runtime.recorder_.enabled()) {
+            const core::ClockSample<core::SteadyClock::time_point> stamped = runtime.clock_.now();
+            const std::int64_t stamp = stamped.status == core::ClockStatus::Ok
+                                           ? stamped.time.time_since_epoch().count()
+                                           : 0;
+            (void)runtime.recorder_.record_gps(1, true, stamp);
+        }
     }
 }
 
@@ -190,14 +234,26 @@ int run(int argc, char** argv, InjectedFault fault) {
     }
 
     MissionRuntime runtime(std::cout, parsed.options, *scenario);
+    if (!parsed.options.record_path.empty()) {
+        runtime.recorder_.set_mission(parsed.options.seed, scenario->name);
+        if (!runtime.recorder_.open(parsed.options.record_path)) {
+            std::cerr << "record open failed\n";
+            return to_int(ExitCode::RecorderFailed);
+        }
+        runtime.events_.set_observer(&on_recorded_event, &runtime.recorder_);
+        const core::ClockSample<core::SteadyClock::time_point> started = runtime.clock_.now();
+        const std::int64_t stamp =
+            started.status == core::ClockStatus::Ok ? started.time.time_since_epoch().count() : 0;
+        (void)runtime.recorder_.record_mission_start(parsed.options.seed, scenario->name, stamp);
+    }
     const flight::BootResult boot = runtime.executive_.boot_to_standby();
     if (boot.status != flight::TransitionStatus::Accepted ||
         boot.mode != flight::SpacecraftMode::Standby) {
-        return to_int(ExitCode::BootFailed);
+        return finish_mission(runtime, ExitCode::BootFailed);
     }
     if (runtime.executive_.accept(flight::Command::StartMission) !=
         flight::CommandStatus::Accepted) {
-        return to_int(ExitCode::BootFailed);
+        return finish_mission(runtime, ExitCode::BootFailed);
     }
 
     // The cycle hook runs after the task body. A health-task deadline is
@@ -214,6 +270,13 @@ int run(int argc, char** argv, InjectedFault fault) {
                         ? runtime.navigation_restart_.generation.load(std::memory_order_acquire)
                         : 0U;
                 runtime.fault_mailbox_.publish_deadline(*source, event.deadline_missed, generation);
+                if (*source == flight::FaultSource::NavigationTask && runtime.recorder_.enabled() &&
+                    generation > runtime.recorded_generation_) {
+                    (void)runtime.recorder_.record_generation(
+                        runtime.recorded_generation_, generation,
+                        event.scheduled.time_since_epoch().count());
+                    runtime.recorded_generation_ = generation;
+                }
             }
         },
         [&runtime](const core::DeadlineMissEvent<core::SteadyClock::time_point>& event) {
@@ -259,21 +322,26 @@ int run(int argc, char** argv, InjectedFault fault) {
                     simulation::ChaosTarget::NavigationTask, scheduled);
             },
             hooks, &runtime.navigation_execution_) != core::AddStatus::Ok) {
-        return to_int(ExitCode::StartupFailed);
+        return finish_mission(runtime, ExitCode::StartupFailed);
     }
     if (runtime.supervisor_.add(
             flight::HealthPulse<Steady>::name, health_timing,
             [&runtime](Steady::time_point scheduled, std::stop_token stop) {
                 const core::ClockSample<Steady::time_point> now = runtime.clock_.now();
                 if (now.status == core::ClockStatus::Ok) {
-                    runtime.chaos_.note(runtime.logger_, now.time);
+                    if (runtime.recorder_.enabled()) {
+                        runtime.chaos_.note(runtime.logger_, now.time, &on_chaos_edge,
+                                            &runtime.recorder_);
+                    } else {
+                        runtime.chaos_.note(runtime.logger_, now.time);
+                    }
                 }
                 flight::run_health_cycle(runtime.power_, runtime.thermal_, runtime.health_,
                                          scheduled, stop);
                 evaluate_fdir(runtime, stop);
             },
             hooks) != core::AddStatus::Ok) {
-        return to_int(ExitCode::StartupFailed);
+        return finish_mission(runtime, ExitCode::StartupFailed);
     }
     if (runtime.supervisor_.add(
             flight::CommBeacon<Steady>::name, comms_timing,
@@ -283,36 +351,36 @@ int run(int argc, char** argv, InjectedFault fault) {
                     simulation::ChaosTarget::CommunicationsTask, scheduled);
             },
             hooks, &runtime.communications_execution_) != core::AddStatus::Ok) {
-        return to_int(ExitCode::StartupFailed);
+        return finish_mission(runtime, ExitCode::StartupFailed);
     }
     const core::ClockSample<core::SteadyClock::time_point> scenario_epoch = runtime.clock_.now();
     if (scenario_epoch.status != core::ClockStatus::Ok) {
-        return to_int(ExitCode::TimeError);
+        return finish_mission(runtime, ExitCode::TimeError);
     }
     const std::span<const simulation::ChaosEvent> schedule{
         scenario->events, scenario->events == nullptr ? 0 : scenario->count};
     if (!runtime.chaos_.load(schedule, scenario_epoch.time)) {
-        return to_int(ExitCode::StartupFailed);
+        return finish_mission(runtime, ExitCode::StartupFailed);
     }
     if (runtime.supervisor_.start() != core::StartStatus::Ok) {
-        return to_int(ExitCode::StartupFailed);
+        return finish_mission(runtime, ExitCode::StartupFailed);
     }
 
     runtime.logger_.info("executive", "tasks started");
     const core::ClockSample<core::SteadyClock::time_point> end = runtime.clock_.now();
     if (end.status != core::ClockStatus::Ok) {
         (void)runtime.supervisor_.shutdown();
-        return to_int(ExitCode::TimeError);
+        return finish_mission(runtime, ExitCode::TimeError);
     }
     core::SteadyClock::time_point stop_at{};
     if (!core::checked_time_add(end.time, parsed.options.run_for, stop_at)) {
         (void)runtime.supervisor_.shutdown();
-        return to_int(ExitCode::TimeError);
+        return finish_mission(runtime, ExitCode::TimeError);
     }
     if (runtime.clock_.wait_until(stop_at, runtime.supervisor_.shutdown_token()) !=
         core::ClockStatus::Ok) {
         (void)runtime.supervisor_.shutdown();
-        return to_int(ExitCode::TimeError);
+        return finish_mission(runtime, ExitCode::TimeError);
     }
 
     const core::ShutdownReport report = runtime.supervisor_.shutdown();
@@ -393,7 +461,7 @@ int run(int argc, char** argv, InjectedFault fault) {
                                          " clears=" + std::to_string(clears) +
                                          " transitions=" + std::to_string(transitions) +
                                          " completed=" + (completed ? "1" : "0"));
-    return to_int(outcome);
+    return finish_mission(runtime, outcome);
 }
 
 } // namespace ares

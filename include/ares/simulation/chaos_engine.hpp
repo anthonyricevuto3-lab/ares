@@ -259,7 +259,10 @@ public:
     }
 
     // One caller. Logging is best-effort and does not change which events are active.
-    void note(core::Logger<C>& logger, time_point now) {
+    // observer, when set, sees each edge after it is logged. It must not change the engine.
+    using EdgeObserver = void (*)(const ChaosEdge& edge, time_point when, void* context);
+    void note(core::Logger<C>& logger, time_point now, EdgeObserver observer = nullptr,
+              void* context = nullptr) {
         core::Duration elapsed{core::Duration::zero()};
         if (!elapsed_since_epoch(now, elapsed)) {
             return;
@@ -270,7 +273,11 @@ public:
         have_mark_ = true;
         marked_ = elapsed;
         for (std::size_t index = 0; index < copied.copied; ++index) {
-            log_edge(logger, edges.at(index));
+            const ChaosEdge& edge = edges.at(index);
+            log_edge(logger, edge);
+            if (observer != nullptr) {
+                observer(edge, now, context);
+            }
         }
     }
 

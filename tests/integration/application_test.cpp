@@ -52,6 +52,19 @@ TEST(Application, ZeroDurationBootsAndShutsDown) {
     EXPECT_NE(text.find("miss_overwrites=0"), std::string::npos);
 }
 
+TEST(Application, RecordOpenFailureDoesNotStartAMission) {
+    char arg0[] = "ares";
+    char arg1[] = "--record";
+    char arg2[] = "no_such_ares_record_dir/mission.bin";
+    char* argv[] = {arg0, arg1, arg2};
+    std::ostringstream captured;
+    std::streambuf* const previous = std::cerr.rdbuf(captured.rdbuf());
+    const int code = ares::run(3, argv);
+    std::cerr.rdbuf(previous);
+    EXPECT_EQ(code, ares::to_int(ares::ExitCode::RecorderFailed));
+    EXPECT_NE(captured.str().find("record open failed"), std::string::npos);
+}
+
 TEST(ApplicationExit, CombinePrefersWorkerFaultOverMissHistory) {
     EXPECT_EQ(ares::combine_exit(ares::ExitCode::Success, false), ares::ExitCode::Success);
     EXPECT_EQ(ares::combine_exit(ares::ExitCode::Success, true),

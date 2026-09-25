@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(ARES
-    VERSION 0.5.0
+    VERSION 0.6.0
     DESCRIPTION "Autonomous Resilient Embedded Spacecraft System"
     LANGUAGES CXX
 )
@@ -92,16 +92,27 @@ target_include_directories(ares_simulation PUBLIC ${PROJECT_SOURCE_DIR}/include)
 target_link_libraries(ares_simulation PUBLIC ares_hardware)
 ares_configure_target(ares_simulation)
 
+add_library(ares_recorder STATIC
+    src/recorder/replay.cpp
+)
+target_include_directories(ares_recorder PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_link_libraries(ares_recorder PUBLIC ares_flight ares_simulation)
+ares_configure_target(ares_recorder)
+
 add_library(ares_app STATIC
     src/application.cpp
 )
 target_include_directories(ares_app PUBLIC ${PROJECT_SOURCE_DIR}/include)
-target_link_libraries(ares_app PUBLIC ares_flight ares_simulation)
+target_link_libraries(ares_app PUBLIC ares_flight ares_simulation ares_recorder)
 ares_configure_target(ares_app)
 
 add_executable(ares src/main.cpp)
 target_link_libraries(ares PRIVATE ares_app)
 ares_configure_target(ares)
+
+add_executable(ares-replay src/recorder/replay_main.cpp)
+target_link_libraries(ares-replay PRIVATE ares_recorder)
+ares_configure_target(ares-replay)
 
 include(CTest)
 if(BUILD_TESTING)
@@ -156,6 +167,8 @@ if(BUILD_TESTING)
         tests/integration/fdir_scenario_test.cpp
         tests/integration/safemode_recovery_test.cpp
         tests/integration/chaos_campaign_test.cpp
+        tests/unit/flight_recorder_test.cpp
+        tests/unit/replay_test.cpp
     )
     target_link_libraries(ares_tests PRIVATE ares_app GTest::gtest_main)
     ares_configure_target(ares_tests)

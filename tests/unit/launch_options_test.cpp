@@ -51,6 +51,9 @@ TEST(LaunchOptions, DefaultsToTheNominalScenarioAndAcceptsASeed) {
     EXPECT_EQ(parse({"--seed", "-1"}).message, "invalid --seed value");
     EXPECT_EQ(parse({"--scenario", "gps_stale", "--scenario", "nominal"}).message,
               "duplicate --scenario");
+    EXPECT_EQ(parse({"--record", "mission.bin"}).options.record_path, "mission.bin");
+    EXPECT_EQ(parse({"--record"}).message, "missing value for --record");
+    EXPECT_EQ(parse({"--record", "a.bin", "--record", "b.bin"}).message, "duplicate --record");
 }
 
 TEST(LaunchOptions, RejectsDuplicateMissingAndInvalidDurations) {

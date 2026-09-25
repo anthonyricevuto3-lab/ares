@@ -20,6 +20,10 @@ enum class SubsystemAction : std::uint8_t { RestartTask, SwitchSensor };
 
 enum class RecoveryTarget : std::uint8_t { NavigationTask, PrimaryGps, BackupGps };
 
+// Which edge a RecoveryEvent is. Started is the default so existing aggregates
+// that do not name it stay start edges.
+enum class RecoveryNotice : std::uint8_t { Started, Succeeded, Failed };
+
 // Published when a logical fault becomes active, including reactivation.
 // Not published again on a later detection of the same active fault.
 template <typename TimePoint> struct FaultActivatedEvent {
@@ -44,17 +48,19 @@ template <typename TimePoint> struct FaultUpdatedEvent {
     bool operator==(const FaultUpdatedEvent&) const = default;
 };
 
-// Published when an active fault becomes inactive. The registry keeps the record.
+// Published when a recovery attempt starts, succeeds, or fails. notice says which.
 template <typename TimePoint> struct RecoveryEvent {
     SubsystemAction action{SubsystemAction::RestartTask};
     RecoveryTarget target{RecoveryTarget::NavigationTask};
     std::uint8_t attempt{0};
     std::uint32_t generation{0};
     TimePoint time{};
+    RecoveryNotice notice{RecoveryNotice::Started};
 
     bool operator==(const RecoveryEvent&) const = default;
 };
 
+// Published when an active fault becomes inactive. The registry keeps the record.
 template <typename TimePoint> struct FaultClearedEvent {
     FaultType type{};
     FaultSource source{};

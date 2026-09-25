@@ -147,6 +147,14 @@ Primary and backup GPS are separate simulated devices. Navigation reads each onc
 
 A verified isolated primary warning stays in the registry and stops blocking mode recovery. A failed backup verification does not. That `RecoveryFailed` is terminal for the mission: one automatic GPS attempt, selection stays on backup, and later healthy samples may clear fault records without clearing the recovery failure or starting another episode. A new `MissionRuntime` is what leaves that state. Fault health and recovery confidence stay separate. The stop token is checked again immediately before a navigation restart stores its new generation and re-arms.
 
+## v0.6 Flight recorder and replay
+
+`FlightRecorder` is an optional observer owned by `MissionRuntime`. It copies already-produced mode, fault, recovery, chaos, deadline, task-generation, and GPS-selection edges into a fixed prefix buffer. It does not write `FaultRegistry`, `RecoveryManager`, the mode machine, the GPS selector, the task supervisor, or `ChaosEngine`. A full buffer or a failed disk write does not change those authorities. `docs/FLIGHT_RECORDER.md` is the format and the overflow contract. `docs/REPLAY.md` is the offline parser.
+
+`EventLog` remains the bounded in-memory operational history. The recorder is attached as an observer after that log releases its mutex, plus thin adapters for chaos edges, navigation generation, and GPS failover. If the log overwrites an old event, the recorder can still hold the copy it already took. The recorder is not authoritative.
+
+Disk I/O runs on the main thread in `commit()`, after workers have stopped. The flight path only copies a fixed slot under one recorder mutex. `--record FILE` opens that file before boot and truncates it. Omitting it leaves recording disabled. Record sequence is the order in the file. Logical timestamps may decrease across threads, and replay keeps sequence order. `ares-replay` reads the file and does not start a mission.
+
 ## Build
 
 C++20, CMake, and Ninja. GoogleTest 1.15.2 is fetched by URL and hash. Warnings are errors on project targets. `ARES_ENABLE_SANITIZERS` adds ASan and UBSan for Clang and GCC, and ASan for MSVC, after a configure-time link check. The `debug-sanitizers` preset and CI turn that on for a Debug build. Sanitizers are off unless requested. The current MSYS2 UCRT64 GCC cannot link them because the runtime libraries are absent; CI uses Clang on Ubuntu, where they are present.

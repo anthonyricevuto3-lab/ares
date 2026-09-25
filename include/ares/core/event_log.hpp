@@ -23,7 +23,21 @@ public:
     EventLog(EventLog&&) = delete;
     EventLog& operator=(EventLog&&) = delete;
 
-    [[nodiscard]] Status publish(const Event& event) { return records_.push(event); }
+    [[nodiscard]] Status publish(const Event& event) {
+        const Status status = records_.push(event);
+        if (observer_ != nullptr) {
+            observer_(&event, observer_context_);
+        }
+        return status;
+    }
+
+    // Set before publishers run. The observer must not call publish on this log.
+    // It runs after the log mutex is released.
+    using Observer = void (*)(const Event* event, void* context);
+    void set_observer(Observer observer, void* context) noexcept {
+        observer_ = observer;
+        observer_context_ = context;
+    }
 
     [[nodiscard]] std::vector<Event> snapshot() const {
         std::vector<Event> copy(size());
@@ -42,6 +56,8 @@ public:
 
 private:
     BoundedLog<Event, Capacity> records_{};
+    Observer observer_{nullptr};
+    void* observer_context_{nullptr};
 };
 
 } // namespace ares::core

@@ -4,6 +4,8 @@
 #include "ares/core/task_supervisor.hpp"
 #include "ares/flight/fdir.hpp"
 #include "ares/flight/freshness.hpp"
+#include "ares/recorder/flight_recorder.hpp"
+#include "ares/recorder/replay.hpp"
 #include "ares/flight/power_manager.hpp"
 #include "ares/flight/sample_limits.hpp"
 #include "ares/flight/thermal_monitor.hpp"
@@ -12,6 +14,7 @@
 #include "ares/simulation/sensors.hpp"
 
 #include <chrono>
+#include <initializer_list>
 #include <stdexcept>
 #include <optional>
 #include <span>
@@ -80,11 +83,14 @@ struct Campaign {
     flight::FdirController<Clock> fdir;
     ares::core::SimulatedExecution navigation_execution{};
     ares::core::SimulatedExecution communications_execution{};
+    ares::recorder::FlightRecorder<>* recorder_{nullptr};
+    std::uint32_t recorded_generation_{0};
     std::optional<ares::core::PeriodicTask<Clock>> navigation_task{};
     std::optional<ares::core::PeriodicTask<Clock>> health_task{};
     std::optional<ares::core::PeriodicTask<Clock>> comms_task{};
 
-    explicit Campaign(const simulation::NamedScenario& scenario)
+    explicit Campaign(const simulation::NamedScenario& scenario,
+                      ares::recorder::FlightRecorder<>* recorder = nullptr)
         : logger(out, clock), model(clock), imu(model, {}, &chaos), gps(model, {}, &chaos),
           backup_gps(model, {}, &chaos, simulation::SensorStream::BackupGps,
                      simulation::ChaosTarget::BackupGps),
@@ -96,6 +102,13 @@ struct Campaign {
                      &navigation_restart.generation),
           comms(logger), power(battery, clock, flight::limits::kPowerMaxAge),
           thermal(temperature, clock, flight::limits::kThermalMaxAge), fdir(events) {
+        recorder_ = recorder;
+        if (recorder_ != nullptr) {
+            recorder_->arm();
+            recorder_->set_mission(0, scenario.name);
+            events.set_observer(&Campaign::on_event, this);
+            (void)recorder_->record_mission_start(0, scenario.name, 0);
+        }
         simulation::SimulationTruth<Clock> truth;
         truth.epoch = Time{};
         truth.voltage = hardware::Millivolts{
@@ -118,6 +131,14 @@ struct Campaign {
                                 ? navigation_restart.generation.load(std::memory_order_acquire)
                                 : 0U;
                         mailbox.publish_deadline(*source, event.deadline_missed, generation);
+                        if (recorder_ != nullptr &&
+                            *source == flight::FaultSource::NavigationTask &&
+                            generation > recorded_generation_) {
+                            (void)recorder_->record_generation(
+                                recorded_generation_, generation,
+                                event.scheduled.time_since_epoch().count());
+                            recorded_generation_ = generation;
+                        }
                     }
                 },
                 {},
@@ -159,7 +180,11 @@ struct Campaign {
             [this](Time scheduled, std::stop_token stop) {
                 const ares::core::ClockSample<Time> now = clock.now();
                 if (now.status == ares::core::ClockStatus::Ok) {
-                    chaos.note(logger, now.time);
+                    if (recorder_ != nullptr) {
+                        chaos.note(logger, now.time, &Campaign::on_chaos, this);
+                    } else {
+                        chaos.note(logger, now.time);
+                    }
                 }
                 flight::run_health_cycle(power, thermal, health, scheduled, stop);
                 if (stop.stop_requested()) {
@@ -181,6 +206,13 @@ struct Campaign {
                 }
                 if (command.failover_to_backup) {
                     selector.failover_to_backup();
+                    if (recorder_ != nullptr) {
+                        const ares::core::ClockSample<Time> stamped = clock.now();
+                        const std::int64_t stamp = stamped.status == ares::core::ClockStatus::Ok
+                                                       ? stamped.time.time_since_epoch().count()
+                                                       : 0;
+                        (void)recorder_->record_gps(1, true, stamp);
+                    }
                 }
             },
             clock, make_hooks());
@@ -246,6 +278,22 @@ struct Campaign {
             }
         }
         return marks;
+    }
+
+    static void on_event(const flight::SystemEvent<Time>* event, void* context) {
+        auto* self = static_cast<Campaign*>(context);
+        if (self == nullptr || self->recorder_ == nullptr || event == nullptr) {
+            return;
+        }
+        ares::recorder::absorb(*self->recorder_, *event);
+    }
+
+    static void on_chaos(const simulation::ChaosEdge& edge, Time when, void* context) {
+        auto* self = static_cast<Campaign*>(context);
+        if (self == nullptr || self->recorder_ == nullptr) {
+            return;
+        }
+        (void)self->recorder_->record_chaos(edge, when.time_since_epoch().count());
     }
 };
 
@@ -489,4 +537,122 @@ TEST(ChaosCampaign, TaskAndGpsRecoveryStayIndependent) {
     EXPECT_EQ(campaign.fdir.recovery().gps_state(), flight::RecoveryState::Succeeded);
     EXPECT_EQ(campaign.selector.selection(), flight::GpsSelection::Backup);
     EXPECT_EQ(campaign.fdir.recovery().gps_attempts(), 1);
+}
+
+namespace {
+
+[[nodiscard]] bool in_order(const ares::recorder::ReplayReport& report,
+                            std::initializer_list<ares::recorder::RecordType> expected) {
+    std::size_t cursor = 0;
+    for (const ares::recorder::ReplayRecord& record : report.records) {
+        if (cursor == expected.size()) {
+            break;
+        }
+        if (record.type ==
+            static_cast<std::uint16_t>(*(expected.begin() + static_cast<std::ptrdiff_t>(cursor)))) {
+            ++cursor;
+        }
+    }
+    return cursor == expected.size();
+}
+
+[[nodiscard]] std::vector<std::uint8_t> record_run(const simulation::NamedScenario& scenario,
+                                                   ares::core::Duration duration) {
+    ares::recorder::FlightRecorder<> recorder;
+    Campaign campaign(scenario, &recorder);
+    campaign.run_for(duration);
+    const auto now = campaign.clock.now();
+    EXPECT_EQ(now.status, ares::core::ClockStatus::Ok);
+    EXPECT_TRUE(recorder.seal(now.time.time_since_epoch().count(),
+                              static_cast<std::uint8_t>(campaign.executive.mode()), 0));
+    return recorder.encode();
+}
+
+} // namespace
+
+TEST(Recording, DisabledRunMatchesARecordedRun) {
+    Campaign plain(*simulation::find_scenario("gps_stale"));
+    ares::recorder::FlightRecorder<> recorder;
+    Campaign recorded(*simulation::find_scenario("gps_stale"), &recorder);
+    plain.run_for(12s);
+    recorded.run_for(12s);
+    EXPECT_EQ(plain.trace(), recorded.trace());
+    EXPECT_EQ(plain.executive.mode(), recorded.executive.mode());
+    EXPECT_EQ(plain.selector.selection(), recorded.selector.selection());
+    EXPECT_EQ(plain.navigation_restart.generation.load(),
+              recorded.navigation_restart.generation.load());
+    EXPECT_EQ(plain.fdir.recovery().gps_state(), recorded.fdir.recovery().gps_state());
+    EXPECT_EQ(plain.fdir.recovery().navigation_state(),
+              recorded.fdir.recovery().navigation_state());
+}
+
+TEST(Recording, GpsFailoverReplayIsByteStable) {
+    const std::vector<std::uint8_t> first =
+        record_run(*simulation::find_scenario("gps_stale"), 12s);
+    const std::vector<std::uint8_t> second =
+        record_run(*simulation::find_scenario("gps_stale"), 12s);
+    EXPECT_EQ(first, second);
+    const ares::recorder::ReplayReport report = ares::recorder::replay_bytes(first);
+    ASSERT_TRUE(report.ok) << report.error << '\n' << ares::recorder::format_timeline(report);
+    EXPECT_TRUE(in_order(
+        report,
+        {ares::recorder::RecordType::MissionStart, ares::recorder::RecordType::ChaosStarted,
+         ares::recorder::RecordType::FaultActivated, ares::recorder::RecordType::RecoveryStarted,
+         ares::recorder::RecordType::GpsSelectionChanged,
+         ares::recorder::RecordType::RecoverySucceeded, ares::recorder::RecordType::MissionEnd}))
+        << ares::recorder::format_timeline(report);
+    EXPECT_GE(report.gps_failovers, 1U);
+    EXPECT_GE(report.recovery_successes, 1U);
+    const std::string text =
+        ares::recorder::format_timeline(report) + ares::recorder::format_summary(report);
+    EXPECT_NE(text.find("Nominal -> Degraded"), std::string::npos);
+    EXPECT_EQ(text,
+              ares::recorder::format_timeline(report) + ares::recorder::format_summary(report));
+}
+
+TEST(Recording, TaskRestartReplayShowsSafeModeRecovery) {
+    const simulation::ChaosEvent delay{simulation::InjectionKind::TaskExecutionDelay,
+                                       simulation::ChaosTarget::NavigationTask,
+                                       1s,
+                                       1s,
+                                       150000000,
+                                       0};
+    const simulation::NamedScenario scenario{"restart-ok", &delay, 1, 0};
+    const ares::recorder::ReplayReport report =
+        ares::recorder::replay_bytes(record_run(scenario, 8s));
+    ASSERT_TRUE(report.ok) << report.error << '\n' << ares::recorder::format_timeline(report);
+    EXPECT_TRUE(in_order(
+        report,
+        {ares::recorder::RecordType::MissionStart, ares::recorder::RecordType::FaultActivated,
+         ares::recorder::RecordType::TaskGenerationChanged,
+         ares::recorder::RecordType::RecoveryStarted, ares::recorder::RecordType::FaultCleared,
+         ares::recorder::RecordType::RecoverySucceeded, ares::recorder::RecordType::MissionEnd}))
+        << ares::recorder::format_timeline(report);
+    EXPECT_GE(report.task_restarts, 1U);
+    EXPECT_GE(report.recovery_successes, 1U);
+    EXPECT_GE(report.clears, 1U);
+    EXPECT_EQ(static_cast<flight::SpacecraftMode>(report.final_mode),
+              flight::SpacecraftMode::Standby);
+    const std::string timeline = ares::recorder::format_timeline(report);
+    EXPECT_NE(timeline.find("Degraded -> SafeMode"), std::string::npos);
+    EXPECT_NE(timeline.find("SafeMode -> Standby"), std::string::npos);
+}
+
+TEST(Recording, RecoveryFailureStaysVisible) {
+    const simulation::ChaosEvent delay{simulation::InjectionKind::TaskExecutionDelay,
+                                       simulation::ChaosTarget::NavigationTask,
+                                       1s,
+                                       30s,
+                                       150000000,
+                                       0};
+    const simulation::NamedScenario scenario{"restart-fail", &delay, 1, 0};
+    const ares::recorder::ReplayReport report =
+        ares::recorder::replay_bytes(record_run(scenario, 20s));
+    ASSERT_TRUE(report.ok) << report.error;
+    EXPECT_TRUE(in_order(report, {ares::recorder::RecordType::RecoveryStarted,
+                                  ares::recorder::RecordType::RecoveryFailed,
+                                  ares::recorder::RecordType::MissionEnd}));
+    EXPECT_GE(report.recovery_failures, 1U);
+    EXPECT_EQ(static_cast<flight::SpacecraftMode>(report.final_mode),
+              flight::SpacecraftMode::SafeMode);
 }
