@@ -107,6 +107,22 @@ Each simulated sensor instance has exactly one flight-task reader for its lifeti
 
 A positive amplitude draws one integer offset per scalar, uniform on `[-amplitude, +amplitude]`, in axis order x, y, z. IMU draws acceleration, then angular rate. GPS draws position, then velocity. Battery draws voltage, then current, then state of charge. Temperature draws one value. A non-positive amplitude does not draw and adds nothing, so the zero-noise configuration matches v0.2. The offset is added with a checked sum; a sum that does not fit saturates to the `int64` limit. An amplitude too large to form the inclusive span does not draw, leaves the truth value, and reports `Invalid`. The simulator does not call `std::random_device`.
 
+## v0.3 Fault detection and response
+
+v0.3 adds flight-side fault detection, a bounded registry, and a small recovery policy. It does not inject faults, and it does not restart tasks or command hardware. The rules are in `docs/FAULT_MODEL.md`. This section is how those rules sit on the v0.2.1 software.
+
+Detection answers what is wrong. Policy answers what to do. `FaultRegistry` stores records and does not choose a mode. Sensor classes, `SpacecraftModel`, and the scheduler do not contain policy.
+
+`NavigationSolution` now keeps the IMU usability and the GPS usability that `combine_navigation` already computed. Callers do not run the freshness arithmetic a second time. The combined `usability` is still the worse of those two results. A clock that is not `Ok` still makes the combined result `TimeError`, and both per-sensor results are `TimeError` as well.
+
+The health task is the only mutator of `FaultRegistry`. Navigation publishes IMU and GPS usability into `FaultMailbox`. Each task's cycle hook publishes that task's deadline result into the same mailbox. The health task publishes battery and temperature after it samples them, consumes the mailbox, updates the registry, and may call `FlightExecutive::request_mode`. The mailbox is the only new lock. It does not guard the registry.
+
+An IMU, GPS, or temperature slot keeps the newest usability and whether any `Usable` sample arrived since the last consume. It is not a queue. If `Usable` arrived, that consume clears the source's sensor-health faults first. If the newest sample is not `Usable`, the same consume then applies it as a new detection, so its consecutive count starts at one. A newest `Usable` sample only clears. If no `Usable` arrived, only the newest sample is applied. `Future` and `TimeError` still hold. A window of `Usable` then `Future`, or `Usable` then `TimeError`, still clears. The hold sample creates no fault. Battery is published once in the health cycle that consumes it, so it has no multi-sample window. A deadline miss stays set until that consume, so an on-time publish cannot erase a miss the health task has not taken yet.
+
+The cycle hook runs after the task body. The health task's own deadline observation is published after FDIR has already run, so it is consumed on the next health cycle. If the health body has already observed stop, it does not consume the mailbox and it does not call policy. A deadline the hook still publishes is left pending and is discarded when the mailbox is destroyed. The task supervisor is the last member of the mission runtime, so workers are joined before the mailbox and the controller are destroyed. After `start()`, the main thread does not call `request_mode`.
+
+`request_mode` is the existing mode machine. The mode is committed before the log line. A logging failure does not undo the transition, and it does not decide whether the transition is attempted. Policy requests only edges the v0.1 table already allows: `Nominal -> Degraded`, `Degraded -> Nominal`, `Nominal -> SafeMode`, and `Degraded -> SafeMode`. It does not request `Emergency`. It does not leave `SafeMode`. `FdirController::apply` keeps the requested mode and the machine's `TransitionStatus` as separate fields. A requested `Degraded` is not proof the spacecraft is `Degraded`. The registry is not rewritten from that status.
+
 ## Build
 
 C++20, CMake, and Ninja. GoogleTest 1.15.2 is fetched by URL and hash. Warnings are errors on project targets. `ARES_ENABLE_SANITIZERS` adds ASan and UBSan for Clang and GCC, and ASan for MSVC, after a configure-time link check. The `debug-sanitizers` preset and CI turn that on for a Debug build. Sanitizers are off unless requested. The current MSYS2 UCRT64 GCC cannot link them because the runtime libraries are absent; CI uses Clang on Ubuntu, where they are present.

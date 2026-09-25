@@ -7,6 +7,8 @@
 #include "ares/flight/system_event.hpp"
 
 #include <cstdint>
+#include <functional>
+#include <utility>
 
 namespace ares::flight {
 
@@ -32,6 +34,13 @@ public:
     [[nodiscard]] BootResult boot_to_standby();
     [[nodiscard]] CommandStatus accept(Command command);
     [[nodiscard]] SpacecraftMode mode() const noexcept;
+    // Same commit-then-notify path as every other transition. The mode is
+    // committed before logging. A logging failure does not undo it.
+    [[nodiscard]] TransitionStatus request_mode(SpacecraftMode target);
+    // Test seam. Invoked at the end of a mode-change callback, while the
+    // machine still rejects a nested transition as Reentrant. Flight leaves
+    // this empty, so production transitions are unchanged.
+    void set_mode_callback_probe(std::function<void()> probe) { probe_ = std::move(probe); }
 
 private:
     [[nodiscard]] time_point stamp() const;
@@ -40,6 +49,7 @@ private:
     core::Logger<C>& logger_;
     core::EventLog<SystemEvent<time_point>>& events_;
     ModeMachine<C> modes_;
+    std::function<void()> probe_{};
 };
 
 extern template class FlightExecutive<core::ManualClock>;

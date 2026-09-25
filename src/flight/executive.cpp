@@ -35,6 +35,9 @@ FlightExecutive<C>::FlightExecutive(C& clock, core::Logger<C>& logger,
         } catch (...) {
             logging_failed();
         }
+        if (probe_) {
+            probe_();
+        }
     });
     modes_.set_on_reject([this](const ModeTransitionRejected<time_point>& event) {
         store(SystemEvent<time_point>{event});
@@ -97,6 +100,10 @@ template <core::Clock C> CommandStatus FlightExecutive<C>::accept(Command comman
 
 template <core::Clock C> SpacecraftMode FlightExecutive<C>::mode() const noexcept {
     return modes_.mode();
+}
+
+template <core::Clock C> TransitionStatus FlightExecutive<C>::request_mode(SpacecraftMode target) {
+    return modes_.transition(target);
 }
 
 template class FlightExecutive<core::ManualClock>;

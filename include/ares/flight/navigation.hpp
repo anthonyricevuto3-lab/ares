@@ -20,6 +20,10 @@ template <typename TimePoint> struct NavigationSolution {
     TimePoint time{};
     hardware::SensorStatus status{hardware::SensorStatus::Unavailable};
     SampleUsability usability{SampleUsability::Unavailable};
+    // Per-sensor freshness already computed above. FDIR reads these instead of
+    // calling evaluate_freshness again. usability remains the worse of the two.
+    SampleUsability imu_usability{SampleUsability::Unavailable};
+    SampleUsability gps_usability{SampleUsability::Unavailable};
     constexpr bool operator==(const NavigationSolution&) const = default;
 };
 
@@ -37,11 +41,13 @@ combine_navigation(const hardware::ImuSample<TimePoint>& imu,
     solution.status = hardware::worse(imu.status, gps.status);
     if (now_status != core::ClockStatus::Ok) {
         solution.usability = SampleUsability::TimeError;
+        solution.imu_usability = SampleUsability::TimeError;
+        solution.gps_usability = SampleUsability::TimeError;
         return solution;
     }
-    const SampleUsability imu_use = evaluate_freshness(imu.status, imu.time, now, limits.imu);
-    const SampleUsability gps_use = evaluate_freshness(gps.status, gps.time, now, limits.gps);
-    solution.usability = worse_usability(imu_use, gps_use);
+    solution.imu_usability = evaluate_freshness(imu.status, imu.time, now, limits.imu);
+    solution.gps_usability = evaluate_freshness(gps.status, gps.time, now, limits.gps);
+    solution.usability = worse_usability(solution.imu_usability, solution.gps_usability);
     return solution;
 }
 

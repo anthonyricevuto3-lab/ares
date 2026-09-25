@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(ARES
-    VERSION 0.2.1
+    VERSION 0.3.0
     DESCRIPTION "Autonomous Resilient Embedded Spacecraft System"
     LANGUAGES CXX
 )
@@ -141,7 +141,13 @@ if(BUILD_TESTING)
         tests/unit/freshness_test.cpp
         tests/unit/random_source_test.cpp
         tests/unit/spacecraft_integration_test.cpp
+        tests/unit/fault_registry_test.cpp
+        tests/unit/fault_detection_test.cpp
+        tests/unit/fault_policy_test.cpp
+        tests/unit/fault_mailbox_test.cpp
+        tests/unit/fault_window_test.cpp
         tests/integration/simulated_spacecraft_test.cpp
+        tests/integration/fdir_scenario_test.cpp
     )
     target_link_libraries(ares_tests PRIVATE ares_app GTest::gtest_main)
     ares_configure_target(ares_tests)

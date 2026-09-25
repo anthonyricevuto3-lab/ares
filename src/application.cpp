@@ -6,6 +6,7 @@
 #include "ares/core/task_supervisor.hpp"
 #include "ares/flight/example_tasks.hpp"
 #include "ares/flight/executive.hpp"
+#include "ares/flight/fdir.hpp"
 #include "ares/flight/power_manager.hpp"
 #include "ares/flight/sample_limits.hpp"
 #include "ares/flight/thermal_monitor.hpp"
@@ -16,6 +17,7 @@
 #include <charconv>
 #include <chrono>
 #include <iostream>
+#include <optional>
 #include <span>
 #include <stdexcept>
 #include <stop_token>
@@ -46,7 +48,8 @@ struct MissionRuntime {
                       flight::NavigationAgeLimits{flight::limits::kNavigationImuMaxAge,
                                                   flight::limits::kNavigationGpsMaxAge}),
           comms_(logger_), power_(battery_, clock_, flight::limits::kPowerMaxAge),
-          thermal_(temperature_, clock_, flight::limits::kThermalMaxAge), supervisor_(clock_) {
+          thermal_(temperature_, clock_, flight::limits::kThermalMaxAge), fdir_(events_),
+          supervisor_(clock_) {
         spacecraft_.set_epoch_now();
     }
 
@@ -66,8 +69,49 @@ struct MissionRuntime {
     flight::CommBeacon<core::SteadyClock> comms_;
     flight::PowerManager<core::SteadyClock> power_;
     flight::ThermalMonitor<core::SteadyClock> thermal_;
+    // The supervisor is destroyed first and joins workers before the mailbox
+    // and the controller are destroyed. A pending observation is not consumed
+    // after health has observed stop; it is discarded with the mailbox.
+    // Workers publish observations. Only the health task mutates the registry.
+    flight::FaultMailbox<core::SteadyClock> fault_mailbox_;
+    flight::FdirController<core::SteadyClock> fdir_;
     core::TaskSupervisor<core::SteadyClock> supervisor_;
 };
+
+[[nodiscard]] std::optional<flight::FaultSource> source_for_task(std::string_view name) {
+    using Steady = core::SteadyClock;
+    if (name == flight::NavigationCadence<Steady>::name) {
+        return flight::FaultSource::NavigationTask;
+    }
+    if (name == flight::HealthPulse<Steady>::name) {
+        return flight::FaultSource::HealthTask;
+    }
+    if (name == flight::CommBeacon<Steady>::name) {
+        return flight::FaultSource::CommunicationsTask;
+    }
+    return std::nullopt;
+}
+
+void publish_navigation_observation(MissionRuntime& runtime) {
+    const flight::NavigationSolution<core::SteadyClock::time_point>& solution =
+        runtime.navigation_.solution();
+    runtime.fault_mailbox_.publish_sensor(flight::FaultSource::Imu, solution.imu_usability);
+    runtime.fault_mailbox_.publish_sensor(flight::FaultSource::Gps, solution.gps_usability);
+}
+
+void evaluate_fdir(MissionRuntime& runtime, std::stop_token stop) {
+    // Stop is observed before publish, consume, and policy. A deadline the
+    // cycle hook still posts after this return is not a mode decision.
+    if (stop.stop_requested()) {
+        return;
+    }
+    runtime.fault_mailbox_.publish_sensor(flight::FaultSource::Temperature,
+                                          runtime.thermal_.usability());
+    runtime.fault_mailbox_.publish_battery(runtime.power_.usability(),
+                                           runtime.power_.latest_observation().voltage);
+    (void)flight::run_fdir_cycle(runtime.fdir_, runtime.fault_mailbox_, runtime.executive_,
+                                 runtime.clock_.now(), stop);
+}
 
 } // namespace
 
@@ -102,9 +146,17 @@ int run(int argc, char** argv, InjectedFault fault) {
         return to_int(ExitCode::BootFailed);
     }
 
+    // The cycle hook runs after the task body. A health-task deadline is
+    // published after evaluate_fdir, so that observation has one health-cycle
+    // of latency. The hook does not call policy. A stop already observed by
+    // the health body cannot be turned into a mode request here.
     core::TaskHooks<core::SteadyClock> hooks{
         [&runtime](const core::TaskCycleEvent<core::SteadyClock::time_point>& event) {
             (void)runtime.cycles_.push(event);
+            if (const std::optional<flight::FaultSource> source =
+                    source_for_task(event.id.text())) {
+                runtime.fault_mailbox_.publish_deadline(*source, event.deadline_missed);
+            }
         },
         [&runtime](const core::DeadlineMissEvent<core::SteadyClock::time_point>& event) {
             (void)runtime.misses_.push(event);
@@ -142,6 +194,9 @@ int run(int argc, char** argv, InjectedFault fault) {
                     throw std::runtime_error("injected worker fault");
                 }
                 runtime.navigation_(scheduled, stop);
+                if (!stop.stop_requested()) {
+                    publish_navigation_observation(runtime);
+                }
             },
             hooks) != core::AddStatus::Ok) {
         return to_int(ExitCode::StartupFailed);
@@ -151,6 +206,7 @@ int run(int argc, char** argv, InjectedFault fault) {
             [&runtime](Steady::time_point scheduled, std::stop_token stop) {
                 flight::run_health_cycle(runtime.power_, runtime.thermal_, runtime.health_,
                                          scheduled, stop);
+                evaluate_fdir(runtime, stop);
             },
             hooks) != core::AddStatus::Ok) {
         return to_int(ExitCode::StartupFailed);

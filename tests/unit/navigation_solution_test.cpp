@@ -57,6 +57,8 @@ TEST(NavigationSolution, CombinesInterfacesAndKeepsTheWorseStatus) {
     EXPECT_EQ(solution.angular_rate, imu.angular_rate);
     EXPECT_EQ(solution.status, hardware::SensorStatus::Stale);
     EXPECT_EQ(solution.usability, flight::SampleUsability::Stale);
+    EXPECT_EQ(solution.imu_usability, flight::SampleUsability::Usable);
+    EXPECT_EQ(solution.gps_usability, flight::SampleUsability::Stale);
 }
 
 TEST(NavigationCadence, ReadsOnlyThroughTheInterfaces) {
@@ -261,5 +263,7 @@ TEST(NavigationFreshness, ClockFailureIsTimeError) {
         imu_sample, gps_sample, ares::core::ClockStatus::Unrepresentable, Time{}, kWide);
     EXPECT_EQ(rejected.status, hardware::SensorStatus::Valid);
     EXPECT_EQ(rejected.usability, flight::SampleUsability::TimeError);
+    EXPECT_EQ(rejected.imu_usability, flight::SampleUsability::TimeError);
+    EXPECT_EQ(rejected.gps_usability, flight::SampleUsability::TimeError);
     EXPECT_EQ(rejected.position.x, 3);
 }
