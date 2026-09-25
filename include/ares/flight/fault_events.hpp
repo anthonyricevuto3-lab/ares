@@ -17,8 +17,9 @@ template <typename TimePoint> struct FaultActivatedEvent {
     bool operator==(const FaultActivatedEvent&) const = default;
 };
 
-// Published once, when an active Warning fault's consecutive count first
-// reaches the persistence limit. Ordinary repeats are not events.
+// Published when an active warning first reaches the persistence limit, and
+// when a DeadlineMiss record changes severity. Repeats inside the same
+// severity, and repeats past the warning limit, are not events.
 template <typename TimePoint> struct FaultUpdatedEvent {
     FaultType type{};
     FaultSource source{};

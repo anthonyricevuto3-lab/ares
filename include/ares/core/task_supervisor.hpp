@@ -63,7 +63,7 @@ public:
     TaskSupervisor& operator=(TaskSupervisor&&) = delete;
 
     [[nodiscard]] AddStatus add(std::string_view name, TaskTiming timing, TaskWork<C> work,
-                                TaskHooks<C> hooks);
+                                TaskHooks<C> hooks, SimulatedExecution* execution = nullptr);
     [[nodiscard]] StartStatus start();
     void request_stop() noexcept;
     void join();

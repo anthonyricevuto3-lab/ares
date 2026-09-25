@@ -48,6 +48,9 @@ FlightExecutive<C>::FlightExecutive(C& clock, core::Logger<C>& logger,
         } catch (...) {
             logging_failed();
         }
+        if (probe_) {
+            probe_();
+        }
     });
 }
 

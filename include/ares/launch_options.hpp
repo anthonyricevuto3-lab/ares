@@ -14,6 +14,8 @@ namespace ares {
 
 struct LaunchOptions {
     core::Duration run_for{std::chrono::milliseconds{250}};
+    std::string scenario{"nominal"};
+    std::uint64_t seed{0};
 };
 
 enum class ArgumentStatus { Ok, Help, Error };
@@ -25,12 +27,16 @@ struct ArgumentParse {
 };
 
 [[nodiscard]] constexpr std::string_view launch_help() noexcept {
-    return "ARES v0.1\n"
-           "Usage: ares [--duration-ms N]\n"
+    return "ARES v0.4\n"
+           "Usage: ares [--duration-ms N] [--scenario NAME] [--seed N]\n"
            "\n"
            "Boot into Standby, accept StartMission, run three periodic tasks, and shut down.\n"
+           "The default scenario is nominal: no injected fault conditions.\n"
            "\n"
            "--duration-ms N   Keep tasks running for N milliseconds (default 250).\n"
+           "--scenario NAME   nominal, gps_stale, gps_unavailable, imu_invalid,\n"
+           "                  low_battery, deadline_storm, or mixed_faults.\n"
+           "--seed N          Mission noise seed (default 0). Scenarios use zero noise.\n"
            "--help            Show this help.\n";
 }
 
@@ -42,6 +48,8 @@ struct ArgumentParse {
     }
 
     bool saw_duration = false;
+    bool saw_scenario = false;
+    bool saw_seed = false;
     while (cursor != args.end()) {
         const std::string_view arg = *cursor;
         if (arg == "--help" || arg == "-h") {
@@ -81,6 +89,50 @@ struct ArgumentParse {
             }
             parsed.options.run_for = std::chrono::milliseconds{milliseconds};
             saw_duration = true;
+            ++cursor;
+            continue;
+        }
+        if (arg == "--scenario") {
+            if (saw_scenario) {
+                parsed.status = ArgumentStatus::Error;
+                parsed.message = "duplicate --scenario";
+                return parsed;
+            }
+            ++cursor;
+            if (cursor == args.end() || cursor->empty()) {
+                parsed.status = ArgumentStatus::Error;
+                parsed.message = "missing value for --scenario";
+                return parsed;
+            }
+            parsed.options.scenario = std::string(*cursor);
+            saw_scenario = true;
+            ++cursor;
+            continue;
+        }
+        if (arg == "--seed") {
+            if (saw_seed) {
+                parsed.status = ArgumentStatus::Error;
+                parsed.message = "duplicate --seed";
+                return parsed;
+            }
+            ++cursor;
+            if (cursor == args.end()) {
+                parsed.status = ArgumentStatus::Error;
+                parsed.message = "missing value for --seed";
+                return parsed;
+            }
+            const std::string_view value = *cursor;
+            std::uint64_t seed = 0;
+            const char* const first = value.data();
+            const char* const last = value.data() + value.size();
+            const std::from_chars_result result = std::from_chars(first, last, seed);
+            if (result.ec != std::errc{} || result.ptr != last) {
+                parsed.status = ArgumentStatus::Error;
+                parsed.message = "invalid --seed value";
+                return parsed;
+            }
+            parsed.options.seed = seed;
+            saw_seed = true;
             ++cursor;
             continue;
         }

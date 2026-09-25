@@ -70,6 +70,18 @@ enum class DeadlineCommand : std::uint8_t { Raise, Clear, Hold };
     return BatteryCommand::Hold;
 }
 
+// Initial DeadlineMiss severity is Advisory. The live record uses this instead
+// once the streak is known. Counts below the warning line stay Advisory.
+[[nodiscard]] constexpr FaultSeverity deadline_severity(std::uint32_t consecutive) noexcept {
+    if (consecutive >= limits::kDeadlineCriticalAfter) {
+        return FaultSeverity::Critical;
+    }
+    if (consecutive >= limits::kDeadlineWarningAfter) {
+        return FaultSeverity::Warning;
+    }
+    return FaultSeverity::Advisory;
+}
+
 [[nodiscard]] constexpr DeadlineCommand detect_deadline(DeadlineFact fact) noexcept {
     switch (fact) {
     case DeadlineFact::Missed:

@@ -37,9 +37,10 @@ public:
     // Same commit-then-notify path as every other transition. The mode is
     // committed before logging. A logging failure does not undo it.
     [[nodiscard]] TransitionStatus request_mode(SpacecraftMode target);
-    // Test seam. Invoked at the end of a mode-change callback, while the
-    // machine still rejects a nested transition as Reentrant. Flight leaves
-    // this empty, so production transitions are unchanged.
+    // Test seam. Invoked at the end of a mode-change callback, and again at the
+    // end of a rejection callback. A nested request from the change callback is
+    // reentrant. A nested request from the rejection callback is rejected and
+    // is not published again. Flight leaves this empty.
     void set_mode_callback_probe(std::function<void()> probe) { probe_ = std::move(probe); }
 
 private:

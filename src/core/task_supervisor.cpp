@@ -22,7 +22,7 @@ template <Clock C> TaskSupervisor<C>::~TaskSupervisor() {
 
 template <Clock C>
 AddStatus TaskSupervisor<C>::add(std::string_view name, TaskTiming timing, TaskWork<C> work,
-                                 TaskHooks<C> hooks) {
+                                 TaskHooks<C> hooks, SimulatedExecution* execution) {
     if (started_) {
         return AddStatus::Started;
     }
@@ -33,7 +33,11 @@ AddStatus TaskSupervisor<C>::add(std::string_view name, TaskTiming timing, TaskW
     if (!id.has_value() || !work || !valid_task_timing(timing)) {
         return AddStatus::Invalid;
     }
-    workers_.at(count_).emplace(*id, timing, std::move(work), clock_, std::move(hooks));
+    auto& slot = workers_.at(count_);
+    slot.emplace(*id, timing, std::move(work), clock_, std::move(hooks));
+    if (execution != nullptr) {
+        slot->task.bind_simulated_execution(execution);
+    }
     ++count_;
     return AddStatus::Ok;
 }

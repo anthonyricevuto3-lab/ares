@@ -40,6 +40,19 @@ TEST(LaunchOptions, HelpDoesNotRequireAProgramName) {
     EXPECT_NE(parsed.message.find("Usage:"), std::string::npos);
 }
 
+TEST(LaunchOptions, DefaultsToTheNominalScenarioAndAcceptsASeed) {
+    const ares::ArgumentParse parsed = parse({"ares", "--scenario", "gps_stale", "--seed", "42"});
+    EXPECT_EQ(parsed.status, ares::ArgumentStatus::Ok);
+    EXPECT_EQ(parsed.options.scenario, "gps_stale");
+    EXPECT_EQ(parsed.options.seed, 42U);
+    EXPECT_EQ(parse({}).options.scenario, "nominal");
+    EXPECT_EQ(parse({}).options.seed, 0U);
+    EXPECT_EQ(parse({"--scenario"}).message, "missing value for --scenario");
+    EXPECT_EQ(parse({"--seed", "-1"}).message, "invalid --seed value");
+    EXPECT_EQ(parse({"--scenario", "gps_stale", "--scenario", "nominal"}).message,
+              "duplicate --scenario");
+}
+
 TEST(LaunchOptions, RejectsDuplicateMissingAndInvalidDurations) {
     EXPECT_EQ(parse({"--duration-ms"}).status, ares::ArgumentStatus::Error);
     EXPECT_EQ(parse({"--duration-ms", "12x"}).message, "invalid --duration-ms value");

@@ -1,5 +1,7 @@
 #include "ares/simulation/sensors.hpp"
 
+#include "ares/simulation/chaos_engine.hpp"
+
 #include <limits>
 
 namespace ares::simulation {
@@ -81,7 +83,16 @@ template <core::Clock C>
 hardware::ImuSample<typename SimulatedImu<C>::time_point> SimulatedImu<C>::read() const {
     const auto state = model_.state_now();
     if (!state.has_value()) {
+        frozen_.reset();
+        frozen_id_.reset();
         return unavailable_imu<time_point>();
+    }
+    const std::optional<std::uint16_t> freeze_id =
+        chaos_ == nullptr
+            ? std::nullopt
+            : chaos_->active_sequence(InjectionKind::SensorFreeze, ChaosTarget::Imu, state->time);
+    if (freeze_id.has_value() && frozen_id_ == freeze_id && frozen_.has_value()) {
+        return *frozen_;
     }
     hardware::ImuSample<time_point> sample;
     sample.acceleration = state->acceleration;
@@ -90,14 +101,36 @@ hardware::ImuSample<typename SimulatedImu<C>::time_point> SimulatedImu<C>::read(
     sample.status = model_.truth().imu;
     if (!amplitude_ok(acceleration_noise_) || !amplitude_ok(rate_noise_)) {
         sample.status = hardware::SensorStatus::Invalid;
-        return sample;
-    }
-    if (!perturb_axes(sample.acceleration, acceleration_noise_, rng_) ||
-        !perturb_axes(sample.angular_rate, rate_noise_, rng_)) {
+    } else if (!perturb_axes(sample.acceleration, acceleration_noise_, rng_) ||
+               !perturb_axes(sample.angular_rate, rate_noise_, rng_)) {
         sample.acceleration = state->acceleration;
         sample.angular_rate = state->angular_rate;
         sample.status = hardware::SensorStatus::Invalid;
     }
+    if (chaos_ == nullptr) {
+        frozen_.reset();
+        frozen_id_.reset();
+        return sample;
+    }
+    if (chaos_->sensor_unavailable(ChaosTarget::Imu, state->time)) {
+        frozen_.reset();
+        frozen_id_.reset();
+        sample.status = hardware::SensorStatus::Unavailable;
+        return sample;
+    }
+    if (chaos_->sensor_invalid(ChaosTarget::Imu, state->time)) {
+        frozen_.reset();
+        frozen_id_.reset();
+        sample.status = hardware::SensorStatus::Invalid;
+        return sample;
+    }
+    if (freeze_id.has_value()) {
+        frozen_ = sample;
+        frozen_id_ = freeze_id;
+        return *frozen_;
+    }
+    frozen_.reset();
+    frozen_id_.reset();
     return sample;
 }
 
@@ -105,7 +138,16 @@ template <core::Clock C>
 hardware::GpsSample<typename SimulatedGps<C>::time_point> SimulatedGps<C>::read() const {
     const auto state = model_.state_now();
     if (!state.has_value()) {
+        frozen_.reset();
+        frozen_id_.reset();
         return unavailable_gps<time_point>();
+    }
+    const std::optional<std::uint16_t> freeze_id =
+        chaos_ == nullptr
+            ? std::nullopt
+            : chaos_->active_sequence(InjectionKind::SensorFreeze, ChaosTarget::Gps, state->time);
+    if (freeze_id.has_value() && frozen_id_ == freeze_id && frozen_.has_value()) {
+        return *frozen_;
     }
     hardware::GpsSample<time_point> sample;
     sample.position = state->position;
@@ -114,14 +156,36 @@ hardware::GpsSample<typename SimulatedGps<C>::time_point> SimulatedGps<C>::read(
     sample.status = model_.truth().gps;
     if (!amplitude_ok(position_noise_) || !amplitude_ok(velocity_noise_)) {
         sample.status = hardware::SensorStatus::Invalid;
-        return sample;
-    }
-    if (!perturb_axes(sample.position, position_noise_, rng_) ||
-        !perturb_axes(sample.velocity, velocity_noise_, rng_)) {
+    } else if (!perturb_axes(sample.position, position_noise_, rng_) ||
+               !perturb_axes(sample.velocity, velocity_noise_, rng_)) {
         sample.position = state->position;
         sample.velocity = state->velocity;
         sample.status = hardware::SensorStatus::Invalid;
     }
+    if (chaos_ == nullptr) {
+        frozen_.reset();
+        frozen_id_.reset();
+        return sample;
+    }
+    if (chaos_->sensor_unavailable(ChaosTarget::Gps, state->time)) {
+        frozen_.reset();
+        frozen_id_.reset();
+        sample.status = hardware::SensorStatus::Unavailable;
+        return sample;
+    }
+    if (chaos_->sensor_invalid(ChaosTarget::Gps, state->time)) {
+        frozen_.reset();
+        frozen_id_.reset();
+        sample.status = hardware::SensorStatus::Invalid;
+        return sample;
+    }
+    if (freeze_id.has_value()) {
+        frozen_ = sample;
+        frozen_id_ = freeze_id;
+        return *frozen_;
+    }
+    frozen_.reset();
+    frozen_id_.reset();
     return sample;
 }
 
@@ -150,6 +214,11 @@ SimulatedBatteryMonitor<C>::read() const {
         sample.current = state->current;
         sample.state_of_charge = state->state_of_charge;
         sample.status = hardware::SensorStatus::Invalid;
+    }
+    if (chaos_ != nullptr && sample.status == hardware::SensorStatus::Valid) {
+        if (const std::optional<std::int64_t> voltage = chaos_->battery_millivolts(state->time)) {
+            sample.voltage = hardware::Millivolts{*voltage};
+        }
     }
     return sample;
 }

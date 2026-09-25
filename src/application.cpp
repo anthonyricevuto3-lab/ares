@@ -11,6 +11,8 @@
 #include "ares/flight/sample_limits.hpp"
 #include "ares/flight/thermal_monitor.hpp"
 #include "ares/launch_options.hpp"
+#include "ares/simulation/chaos_engine.hpp"
+#include "ares/simulation/scenarios.hpp"
 #include "ares/simulation/sensors.hpp"
 
 #include <array>
@@ -24,6 +26,7 @@
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <variant>
 #include <vector>
 
 namespace ares {
@@ -40,10 +43,14 @@ constexpr core::TaskTiming comms_timing{std::chrono::milliseconds{400},
 // destroyed first and joins every worker before the tasks, sensors, logger,
 // event logs, or clock are destroyed. Sensors outlive the tasks that reference them.
 struct MissionRuntime {
-    explicit MissionRuntime(std::ostream& out)
-        : logger_(out, clock_), spacecraft_(clock_), imu_(spacecraft_), gps_(spacecraft_),
-          battery_(spacecraft_), temperature_(spacecraft_), executive_(clock_, logger_, events_),
-          health_(logger_),
+    MissionRuntime(std::ostream& out, const LaunchOptions& options,
+                   const simulation::NamedScenario& scenario)
+        : logger_(out, clock_), spacecraft_(clock_),
+          imu_(spacecraft_, simulation::SensorNoise{options.seed}, &chaos_),
+          gps_(spacecraft_, simulation::SensorNoise{options.seed}, &chaos_),
+          battery_(spacecraft_, simulation::SensorNoise{options.seed}, &chaos_),
+          temperature_(spacecraft_, simulation::SensorNoise{options.seed}),
+          executive_(clock_, logger_, events_), health_(logger_),
           navigation_(logger_, imu_, gps_, clock_,
                       flight::NavigationAgeLimits{flight::limits::kNavigationImuMaxAge,
                                                   flight::limits::kNavigationGpsMaxAge}),
@@ -51,6 +58,12 @@ struct MissionRuntime {
           thermal_(temperature_, clock_, flight::limits::kThermalMaxAge), fdir_(events_),
           supervisor_(clock_) {
         spacecraft_.set_epoch_now();
+        if (scenario.battery_baseline_mv > 0) {
+            simulation::SimulationTruth<core::SteadyClock> truth = spacecraft_.truth();
+            truth.voltage = hardware::Millivolts{scenario.battery_baseline_mv};
+            spacecraft_.set_truth(truth);
+        }
+        scenario_name_ = scenario.name;
     }
 
     core::SteadyClock clock_;
@@ -58,6 +71,10 @@ struct MissionRuntime {
     core::EventLog<flight::SystemEvent<core::SteadyClock::time_point>> events_;
     core::BoundedLog<core::TaskCycleEvent<core::SteadyClock::time_point>, 64> cycles_;
     core::BoundedLog<core::DeadlineMissEvent<core::SteadyClock::time_point>, 32> misses_;
+    simulation::ChaosEngine<core::SteadyClock> chaos_{};
+    std::string scenario_name_{"nominal"};
+    core::SimulatedExecution navigation_execution_{};
+    core::SimulatedExecution communications_execution_{};
     simulation::SpacecraftModel<core::SteadyClock> spacecraft_;
     simulation::SimulatedImu<core::SteadyClock> imu_;
     simulation::SimulatedGps<core::SteadyClock> gps_;
@@ -134,8 +151,13 @@ int run(int argc, char** argv, InjectedFault fault) {
         std::cerr << parsed.message << '\n';
         return to_int(ExitCode::UsageError);
     }
+    const simulation::NamedScenario* scenario = simulation::find_scenario(parsed.options.scenario);
+    if (scenario == nullptr) {
+        std::cerr << "unknown scenario: " << parsed.options.scenario << '\n';
+        return to_int(ExitCode::UsageError);
+    }
 
-    MissionRuntime runtime(std::cout);
+    MissionRuntime runtime(std::cout, parsed.options, *scenario);
     const flight::BootResult boot = runtime.executive_.boot_to_standby();
     if (boot.status != flight::TransitionStatus::Accepted ||
         boot.mode != flight::SpacecraftMode::Standby) {
@@ -197,13 +219,19 @@ int run(int argc, char** argv, InjectedFault fault) {
                 if (!stop.stop_requested()) {
                     publish_navigation_observation(runtime);
                 }
+                runtime.navigation_execution_.extra = runtime.chaos_.execution_delay(
+                    simulation::ChaosTarget::NavigationTask, scheduled);
             },
-            hooks) != core::AddStatus::Ok) {
+            hooks, &runtime.navigation_execution_) != core::AddStatus::Ok) {
         return to_int(ExitCode::StartupFailed);
     }
     if (runtime.supervisor_.add(
             flight::HealthPulse<Steady>::name, health_timing,
             [&runtime](Steady::time_point scheduled, std::stop_token stop) {
+                const core::ClockSample<Steady::time_point> now = runtime.clock_.now();
+                if (now.status == core::ClockStatus::Ok) {
+                    runtime.chaos_.note(runtime.logger_, now.time);
+                }
                 flight::run_health_cycle(runtime.power_, runtime.thermal_, runtime.health_,
                                          scheduled, stop);
                 evaluate_fdir(runtime, stop);
@@ -215,8 +243,19 @@ int run(int argc, char** argv, InjectedFault fault) {
             flight::CommBeacon<Steady>::name, comms_timing,
             [&runtime](Steady::time_point scheduled, std::stop_token stop) {
                 runtime.comms_(scheduled, stop);
+                runtime.communications_execution_.extra = runtime.chaos_.execution_delay(
+                    simulation::ChaosTarget::CommunicationsTask, scheduled);
             },
-            hooks) != core::AddStatus::Ok) {
+            hooks, &runtime.communications_execution_) != core::AddStatus::Ok) {
+        return to_int(ExitCode::StartupFailed);
+    }
+    const core::ClockSample<core::SteadyClock::time_point> scenario_epoch = runtime.clock_.now();
+    if (scenario_epoch.status != core::ClockStatus::Ok) {
+        return to_int(ExitCode::TimeError);
+    }
+    const std::span<const simulation::ChaosEvent> schedule{
+        scenario->events, scenario->events == nullptr ? 0 : scenario->count};
+    if (!runtime.chaos_.load(schedule, scenario_epoch.time)) {
         return to_int(ExitCode::StartupFailed);
     }
     if (runtime.supervisor_.start() != core::StartStatus::Ok) {
@@ -294,7 +333,31 @@ int run(int argc, char** argv, InjectedFault fault) {
             " miss_overwrites=" + std::to_string(runtime.misses_.overwrite_count()) +
             " cycle_overwrites=" + std::to_string(runtime.cycles_.overwrite_count()) +
             " missed_grace=" + std::to_string(report.missed_grace));
-    return to_int(combine_exit(exit_code_for(runtime.supervisor_), runtime.misses_.overflowed()));
+    using SteadyTime = core::SteadyClock::time_point;
+    std::uint32_t activations = 0;
+    std::uint32_t clears = 0;
+    std::uint32_t transitions = 0;
+    for (const flight::SystemEvent<SteadyTime>& event : runtime.events_.snapshot()) {
+        if (std::holds_alternative<flight::FaultActivatedEvent<SteadyTime>>(event)) {
+            ++activations;
+        } else if (std::holds_alternative<flight::FaultClearedEvent<SteadyTime>>(event)) {
+            ++clears;
+        } else if (std::holds_alternative<flight::ModeChangedEvent<SteadyTime>>(event)) {
+            ++transitions;
+        }
+    }
+    const ExitCode outcome =
+        combine_exit(exit_code_for(runtime.supervisor_), runtime.misses_.overflowed());
+    // completed follows the process exit. A missed stop grace is logged above and
+    // does not by itself change that exit, so it does not by itself clear completed.
+    const bool completed = outcome == ExitCode::Success;
+    runtime.logger_.info("scenario", "name=" + runtime.scenario_name_ + " mode=" +
+                                         std::string(flight::to_string(runtime.executive_.mode())) +
+                                         " activations=" + std::to_string(activations) +
+                                         " clears=" + std::to_string(clears) +
+                                         " transitions=" + std::to_string(transitions) +
+                                         " completed=" + (completed ? "1" : "0"));
+    return to_int(outcome);
 }
 
 } // namespace ares

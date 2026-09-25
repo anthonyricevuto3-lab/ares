@@ -88,6 +88,7 @@ inline constexpr std::array<FaultType, 3> kSensorHealthFaults{
     case FaultType::SensorStale:
         return FaultSeverity::Warning;
     case FaultType::DeadlineMiss:
+        // Base severity only. An active streak may raise the record above this.
         return FaultSeverity::Advisory;
     case FaultType::LowBattery:
         return FaultSeverity::Critical;

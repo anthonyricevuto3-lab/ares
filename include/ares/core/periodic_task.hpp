@@ -29,6 +29,14 @@ template <Clock C> struct TaskHooks {
 template <Clock C>
 using TaskWork = std::function<void(typename C::time_point scheduled, std::stop_token stop)>;
 
+// Same-thread note. The worker sets extra before returning, and poll adds it to
+// the completion timestamp. A null note, or a zero extra, leaves completion equal
+// to the clock sample. This is how a scenario consumes simulated execution time
+// without sleeping and without changing an uninjected cycle.
+struct SimulatedExecution {
+    Duration extra{Duration::zero()};
+};
+
 template <Clock C> struct DeadlineRecord {
     using time_point = typename C::time_point;
     bool recorded{false};
@@ -56,6 +64,7 @@ public:
     [[nodiscard]] ArmStatus arm(time_point first_release);
     void disarm() noexcept;
     [[nodiscard]] PollResult poll(std::stop_token stop = {});
+    void bind_simulated_execution(SimulatedExecution* note) noexcept { note_ = note; }
     [[nodiscard]] time_point next_release() const noexcept;
     [[nodiscard]] TaskId id() const noexcept;
     [[nodiscard]] DeadlineRecord<C> deadline_record() const noexcept;
@@ -69,6 +78,12 @@ private:
 
     [[nodiscard]] ReleaseUpdate advance_release(time_point scheduled, time_point completed) const;
     [[nodiscard]] PollResult finish_cycle(time_point scheduled, time_point completed, bool failed);
+    struct SimulatedCompletion {
+        time_point time{};
+        bool unrepresentable{false};
+    };
+
+    [[nodiscard]] SimulatedCompletion apply_simulated_execution(time_point completed) noexcept;
 
     TaskId id_{};
     Duration period_{};
@@ -80,6 +95,7 @@ private:
     bool armed_{false};
     bool in_poll_{false};
     DeadlineRecord<C> record_{};
+    SimulatedExecution* note_{nullptr};
 };
 
 extern template class PeriodicTask<ManualClock>;

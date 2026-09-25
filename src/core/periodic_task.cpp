@@ -81,8 +81,19 @@ template <Clock C> PollResult PeriodicTask<C>::poll(std::stop_token stop) {
         // The release is consumed before the exception reaches the supervisor.
         const ClockSample<time_point> completed = clock_.now();
         if (completed.status == ClockStatus::Ok) {
-            (void)finish_cycle(scheduled, completed.time, true);
+            const SimulatedCompletion shifted = apply_simulated_execution(completed.time);
+            if (shifted.unrepresentable) {
+                record_.recorded = true;
+                record_.missed = false;
+                record_.failed = true;
+                record_.unusable = true;
+                record_.scheduled = scheduled;
+                disarm();
+            } else {
+                (void)finish_cycle(scheduled, shifted.time, true);
+            }
         } else {
+            (void)apply_simulated_execution(scheduled);
             record_.recorded = true;
             record_.failed = true;
             record_.unusable = true;
@@ -93,13 +104,46 @@ template <Clock C> PollResult PeriodicTask<C>::poll(std::stop_token stop) {
     }
     const ClockSample<time_point> completed = clock_.now();
     if (completed.status != ClockStatus::Ok) {
+        (void)apply_simulated_execution(scheduled);
         record_.recorded = true;
         record_.unusable = true;
         record_.scheduled = scheduled;
         disarm();
         return PollResult::ScheduleError;
     }
-    return finish_cycle(scheduled, completed.time, false);
+    const SimulatedCompletion shifted = apply_simulated_execution(completed.time);
+    if (shifted.unrepresentable) {
+        record_.recorded = true;
+        record_.missed = false;
+        record_.failed = false;
+        record_.unusable = true;
+        record_.scheduled = scheduled;
+        record_.completed = completed.time;
+        disarm();
+        return PollResult::ScheduleError;
+    }
+    return finish_cycle(scheduled, shifted.time, false);
+}
+
+template <Clock C>
+typename PeriodicTask<C>::SimulatedCompletion
+PeriodicTask<C>::apply_simulated_execution(time_point completed) noexcept {
+    SimulatedCompletion result{completed, false};
+    if (note_ == nullptr) {
+        return result;
+    }
+    const Duration extra = note_->extra;
+    note_->extra = Duration::zero();
+    if (extra <= Duration::zero()) {
+        return result;
+    }
+    time_point shifted{};
+    if (!checked_time_add(completed, extra, shifted)) {
+        result.unrepresentable = true;
+        return result;
+    }
+    result.time = shifted;
+    return result;
 }
 
 template <Clock C>

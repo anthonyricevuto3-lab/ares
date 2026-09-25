@@ -8,6 +8,7 @@
 #include <iostream>
 #include <semaphore>
 #include <sstream>
+#include <string>
 #include <stop_token>
 
 #include <gtest/gtest.h>
@@ -50,6 +51,49 @@ TEST(MissionExit, ScheduleFaultThroughRunIsNonzero) {
     const int code = run_with(ares::InjectedFault::ScheduleOverflow, "60000");
     EXPECT_EQ(code, ares::to_int(ares::ExitCode::ScheduleFault));
     EXPECT_NE(code, 0);
+}
+
+struct CapturedRun {
+    int code{0};
+    std::string log{};
+};
+
+CapturedRun capture_run(ares::InjectedFault fault, const char* duration_ms) {
+    char arg0[] = "ares";
+    char arg1[] = "--duration-ms";
+    char arg2[16]{};
+    for (std::size_t index = 0; duration_ms[index] != '\0' && index + 1 < sizeof(arg2); ++index) {
+        arg2[index] = duration_ms[index];
+    }
+    char* argv[] = {arg0, arg1, arg2};
+    std::ostringstream captured;
+    std::streambuf* const previous = std::cout.rdbuf(captured.rdbuf());
+    const int code = ares::run(3, argv, fault);
+    std::cout.rdbuf(previous);
+    return CapturedRun{code, captured.str()};
+}
+
+TEST(MissionExit, NormalScenarioReportsCompleted) {
+    const CapturedRun run = capture_run(ares::InjectedFault::None, "0");
+    EXPECT_EQ(run.code, ares::to_int(ares::ExitCode::Success));
+    EXPECT_NE(run.log.find("completed=1"), std::string::npos);
+    EXPECT_EQ(run.log.find("completed=0"), std::string::npos);
+}
+
+TEST(MissionExit, WorkerExceptionReportsNotCompleted) {
+    const auto previous = std::set_terminate([] { std::abort(); });
+    const CapturedRun run = capture_run(ares::InjectedFault::WorkerThrows, "60000");
+    std::set_terminate(previous);
+    EXPECT_EQ(run.code, ares::to_int(ares::ExitCode::WorkerException));
+    EXPECT_NE(run.log.find("completed=0"), std::string::npos);
+    EXPECT_EQ(run.log.find("completed=1"), std::string::npos);
+}
+
+TEST(MissionExit, ScheduleFaultReportsNotCompleted) {
+    const CapturedRun run = capture_run(ares::InjectedFault::ScheduleOverflow, "60000");
+    EXPECT_EQ(run.code, ares::to_int(ares::ExitCode::ScheduleFault));
+    EXPECT_NE(run.log.find("completed=0"), std::string::npos);
+    EXPECT_EQ(run.log.find("completed=1"), std::string::npos);
 }
 
 TEST(MissionExit, ScheduleFaultKeepsTheDeadlineMiss) {

@@ -16,6 +16,15 @@ inline constexpr hardware::Millivolts kLowBatteryClear{11500};
 // One detection still records the fault.
 inline constexpr std::uint32_t kWarningPersistence{3};
 
+// DeadlineMiss stays one record per task. Its severity follows the current
+// miss streak: 1-2 Advisory, 3-4 Warning, 5 and above Critical.
+inline constexpr std::uint32_t kDeadlineWarningAfter{3};
+inline constexpr std::uint32_t kDeadlineCriticalAfter{5};
+
+// Consecutive healthy FDIR evaluations required before SafeMode may request
+// Standby. A blocked evaluation resets the count.
+inline constexpr std::uint32_t kSafeModeRecoveryCycles{3};
+
 // Every (sensor source, sensor-health type), plus three deadline sources, plus
 // LowBattery, is 16 identities. The flight registry is that size.
 inline constexpr std::size_t kFaultRegistryCapacity{16};

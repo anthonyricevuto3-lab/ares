@@ -9,6 +9,8 @@
 #include "ares/flight/fault_policy.hpp"
 #include "ares/flight/system_event.hpp"
 
+#include <cstdint>
+#include <limits>
 #include <stop_token>
 
 namespace ares::flight {
@@ -18,14 +20,16 @@ struct BatteryObservationResult {
     RegistryStatus power{RegistryStatus::Unchanged};
 };
 
-// Owns FaultRegistry mutation and the policy request. Not thread-safe.
-// Other tasks publish into FaultMailbox. This object is the consumer.
-// Mode changes go through FlightExecutive::request_mode, which is the existing
-// machine. A rejected or absent request leaves the mode alone.
-template <core::Clock C> class FdirController {
+// Owns FaultRegistry mutation, deadline severity, and SafeMode recovery count.
+// Not thread-safe. Other tasks publish into FaultMailbox. This object is the
+// consumer. Mode changes go through FlightExecutive::request_mode. A rejected
+// or absent request leaves the mode alone. evaluate() does not advance the
+// SafeMode counter; apply() does, once per health cycle.
+template <core::Clock C, std::size_t Capacity = limits::kFaultRegistryCapacity>
+class FdirController {
 public:
     using time_point = typename C::time_point;
-    using Registry = FaultRegistry<time_point, limits::kFaultRegistryCapacity>;
+    using Registry = FaultRegistry<time_point, Capacity>;
 
     explicit FdirController(core::EventLog<SystemEvent<time_point>>& events,
                             FaultPolicyLimits policy = {}, BatteryThresholds battery = {})
@@ -70,7 +74,7 @@ public:
         }
         const DeadlineCommand command = detect_deadline(fact);
         if (command == DeadlineCommand::Raise) {
-            return raise_one(FaultType::DeadlineMiss, source, time);
+            return raise_deadline(source, time);
         }
         if (command == DeadlineCommand::Clear) {
             return clear_one(FaultType::DeadlineMiss, source, time);
@@ -108,9 +112,12 @@ public:
     // Requests a mode only when policy named one. The returned decision keeps
     // that request and the machine's TransitionStatus as separate fields.
     // Logging inside the executive cannot roll the transition back. The
-    // registry is not updated from the transition result.
+    // registry is not updated from the transition result. One call is one
+    // SafeMode recovery sample.
     [[nodiscard]] PolicyDecision apply(FlightExecutive<C>& executive) {
-        PolicyDecision decision = evaluate(executive.mode());
+        const SpacecraftMode current = executive.mode();
+        PolicyDecision decision = evaluate(current);
+        consider_safe_recovery(decision, current);
         if (decision.requested_mode.has_value()) {
             decision.transition = executive.request_mode(*decision.requested_mode);
         }
@@ -118,6 +125,9 @@ public:
     }
 
     [[nodiscard]] const Registry& registry() const noexcept { return registry_; }
+    [[nodiscard]] std::uint32_t safe_recovery_streak() const noexcept {
+        return safe_recovery_streak_;
+    }
 
 private:
     void ingest_sensor(FaultSource source, const typename FaultMailbox<C>::SensorSlot& slot,
@@ -136,6 +146,53 @@ private:
     [[nodiscard]] static DeadlineFact
     deadline_fact(const typename FaultMailbox<C>::DeadlineSlot& slot) noexcept {
         return slot.missed ? DeadlineFact::Missed : DeadlineFact::OnTime;
+    }
+
+    [[nodiscard]] RegistryStatus raise_deadline(FaultSource source, time_point time) {
+        const FaultRecord<time_point>* existing = registry_.find(FaultType::DeadlineMiss, source);
+        FaultSeverity previous = FaultSeverity::Advisory;
+        bool was_active = false;
+        std::uint32_t next_count = 1;
+        if (existing != nullptr && existing->active) {
+            was_active = true;
+            previous = existing->severity;
+            next_count = existing->consecutive_count;
+            if (next_count < std::numeric_limits<std::uint32_t>::max()) {
+                ++next_count;
+            }
+        }
+        const FaultSeverity severity = deadline_severity(next_count);
+        const RegistryStatus status =
+            registry_.raise(FaultType::DeadlineMiss, source, severity, time);
+        if (status != RegistryStatus::Activated && status != RegistryStatus::Updated) {
+            return status;
+        }
+        const FaultRecord<time_point>* record = registry_.find(FaultType::DeadlineMiss, source);
+        if (status == RegistryStatus::Activated && record != nullptr) {
+            (void)events_.publish(SystemEvent<time_point>{FaultActivatedEvent<time_point>{
+                record->type, record->source, record->severity, record->last_detected}});
+        }
+        if (status == RegistryStatus::Updated && was_active && record != nullptr &&
+            record->severity != previous) {
+            (void)events_.publish(SystemEvent<time_point>{
+                FaultUpdatedEvent<time_point>{record->type, record->source, record->severity,
+                                              record->consecutive_count, record->last_detected}});
+        }
+        return status;
+    }
+
+    void consider_safe_recovery(PolicyDecision& decision, SpacecraftMode mode) {
+        if (mode != SpacecraftMode::SafeMode || safe_mode_exit_blocked(registry_, policy_)) {
+            safe_recovery_streak_ = 0;
+            return;
+        }
+        if (safe_recovery_streak_ < limits::kSafeModeRecoveryCycles) {
+            ++safe_recovery_streak_;
+        }
+        if (safe_recovery_streak_ >= limits::kSafeModeRecoveryCycles) {
+            decision.action = RecoveryAction::RecoverToStandby;
+            decision.requested_mode = SpacecraftMode::Standby;
+        }
     }
 
     [[nodiscard]] RegistryStatus clear_sensor_faults(FaultSource source, time_point time) {
@@ -191,6 +248,7 @@ private:
     FaultPolicyLimits policy_;
     BatteryThresholds battery_;
     Registry registry_{};
+    std::uint32_t safe_recovery_streak_{0};
 };
 
 // Health calls this once per cycle. A stop request returns before consume and

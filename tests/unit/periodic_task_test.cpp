@@ -354,6 +354,92 @@ TEST(PeriodicTask, UnrepresentableNextReleaseIsAnError) {
     EXPECT_EQ(task.poll(), core::PollResult::Waiting);
 }
 
+TEST(PeriodicTask, ZeroSimulatedDelayKeepsTheClockTimestamp) {
+    core::ManualClock clock;
+    core::SimulatedExecution note;
+    Task task{id("nav"),
+              core::TaskTiming{100ms, 100ms},
+              [&](Time, std::stop_token) { note.extra = 0ns; },
+              clock,
+              {}};
+    task.bind_simulated_execution(&note);
+    ASSERT_EQ(task.arm(Time{}), core::ArmStatus::Armed);
+    EXPECT_EQ(task.poll(), core::PollResult::Ran);
+    EXPECT_FALSE(task.deadline_record().missed);
+    EXPECT_FALSE(task.deadline_record().unusable);
+    EXPECT_EQ(task.deadline_record().completed, Time{});
+}
+
+TEST(PeriodicTask, PositiveSimulatedDelayIsADeadlineMiss) {
+    core::ManualClock clock;
+    core::SimulatedExecution note;
+    Task task{id("nav"),
+              core::TaskTiming{100ms, 100ms},
+              [&](Time, std::stop_token) { note.extra = 150ms; },
+              clock,
+              {}};
+    task.bind_simulated_execution(&note);
+    ASSERT_EQ(task.arm(Time{}), core::ArmStatus::Armed);
+    EXPECT_EQ(task.poll(), core::PollResult::Ran);
+    EXPECT_TRUE(task.deadline_record().missed);
+    EXPECT_FALSE(task.deadline_record().unusable);
+    EXPECT_EQ(task.deadline_record().completed, Time{150ms});
+}
+
+TEST(PeriodicTask, LargestRepresentableSimulatedDelayKeepsTheShiftedTimestamp) {
+    core::ManualClock clock;
+    const core::Duration room = 100ms;
+    ASSERT_EQ(clock.advance(core::Duration::max() - room), core::AdvanceStatus::Applied);
+    core::SimulatedExecution note;
+    Task task{id("nav"),
+              core::TaskTiming{100ms, 100ms},
+              [&](Time, std::stop_token) { note.extra = room; },
+              clock,
+              {}};
+    task.bind_simulated_execution(&note);
+    ASSERT_EQ(task.arm(clock.now().time), core::ArmStatus::Armed);
+    EXPECT_EQ(task.poll(), core::PollResult::Ran);
+    EXPECT_EQ(task.deadline_record().completed, Time::max());
+    EXPECT_FALSE(task.deadline_record().missed);
+    EXPECT_FALSE(task.deadline_record().unusable);
+}
+
+TEST(PeriodicTask, SimulatedDelayPastTheTimeDomainIsAScheduleError) {
+    core::ManualClock clock;
+    const core::Duration room = 100ms;
+    ASSERT_EQ(clock.advance(core::Duration::max() - room), core::AdvanceStatus::Applied);
+    core::SimulatedExecution note;
+    Task task{id("nav"),
+              core::TaskTiming{100ms, 100ms},
+              [&](Time, std::stop_token) { note.extra = room + 1ns; },
+              clock,
+              {}};
+    task.bind_simulated_execution(&note);
+    ASSERT_EQ(task.arm(clock.now().time), core::ArmStatus::Armed);
+    EXPECT_EQ(task.poll(), core::PollResult::ScheduleError);
+    EXPECT_FALSE(task.deadline_record().missed);
+    EXPECT_TRUE(task.deadline_record().unusable);
+    EXPECT_EQ(task.deadline_record().completed, Time{core::Duration::max() - room});
+    EXPECT_EQ(task.poll(), core::PollResult::Waiting);
+}
+
+TEST(PeriodicTask, HugeSimulatedDelayDoesNotScoreOnTime) {
+    core::ManualClock clock;
+    ASSERT_EQ(clock.advance(1ns), core::AdvanceStatus::Applied);
+    core::SimulatedExecution note;
+    Task task{id("nav"),
+              core::TaskTiming{100ms, 100ms},
+              [&](Time, std::stop_token) { note.extra = core::Duration::max(); },
+              clock,
+              {}};
+    task.bind_simulated_execution(&note);
+    ASSERT_EQ(task.arm(clock.now().time), core::ArmStatus::Armed);
+    EXPECT_EQ(task.poll(), core::PollResult::ScheduleError);
+    EXPECT_FALSE(task.deadline_record().missed);
+    EXPECT_TRUE(task.deadline_record().unusable);
+    EXPECT_EQ(task.poll(), core::PollResult::Waiting);
+}
+
 TEST(ManualClock, AdvanceToTheLimitIsRejected) {
     core::ManualClock clock;
     ASSERT_EQ(clock.advance(core::Duration::max()), core::AdvanceStatus::Applied);
