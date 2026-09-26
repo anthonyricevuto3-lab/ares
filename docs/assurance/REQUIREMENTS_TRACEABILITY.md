@@ -46,8 +46,8 @@ Hazard IDs are defined in `HAZARD_ANALYSIS.md`. A dash means the requirement is 
 
 ## Coverage of the requirement set
 
-Every requirement in `REQUIREMENTS.md` appears in the table above. A verification cell that does not say otherwise is a test that asserts the named behavior. Cells that say Test and Inspection use the test only for the clause named Test, and the source reading only for the clause named Inspection. Structural coverage is a separate measurement in `METRICS.md`.
+Every requirement in `REQUIREMENTS.md` appears in the table above. A verification cell that does not say otherwise is a test that asserts the named behavior. Cells that say Test and Inspection use the test only for the clause named Test, and the source reading only for the clause named Inspection. Structural coverage is a separate measurement in `VERIFICATION_REPORT.md`.
 
 ## Nonconformances
 
-No requirement in this set is linked to an open defect. SWE-052 also asks for requirements-to-nonconformances traceability. The project has no defect database to attach. Future defects use the IDs in `DEFECT_MANAGEMENT.md` and should add a row here when they affect a requirement.
+No requirement in this set is linked to an open defect. SWE-052 also asks for requirements-to-nonconformances traceability. The project has no defect database to attach. A later defect that affects a requirement should add a row here. Severity and closure rules are in `SOFTWARE_ASSURANCE_PLAN.md`.

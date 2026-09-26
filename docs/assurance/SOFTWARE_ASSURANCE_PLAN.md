@@ -1,83 +1,86 @@
-# ARES Software Assurance Plan
+# ARES Software Assurance
 
-This is an independent educational alignment exercise. It has not been approved by NASA. ARES applies selected NASA software engineering and software assurance practices with documented project-specific tailoring.
+ARES applies selected NASA software engineering and software assurance practices with documented project-specific tailoring. This is an independent educational alignment exercise. It is not NASA certification, NASA approval, flight qualification, DO-178C compliance, formal IV&V, or a completed NASA Software Formal Inspection.
 
-## Purpose
+The practices considered are NPR 7150.2D (effective 8 March 2022), NASA-STD-8739.8B (8 September 2022), and NASA-STD-8739.9 with Change 1. The standards catalog lists NASA-STD-8739.9 inactive. It was used only as inspection guidance. The mapping is `NASA_ALIGNMENT_MATRIX.md`. There is no NASA Technical Authority signature, so that matrix is a project record, not an approved NASA requirements mapping matrix.
 
-Record how ARES 1.0.0 is checked against selected practices in:
+## Purpose and scope
 
-- NPR 7150.2D, *NASA Software Engineering Requirements*, effective 8 March 2022 (NODIS PDF `N_PR_7150_002D_.pdf`)
-- NASA-STD-8739.8B, *Software Assurance and Software Safety Standard*, approved 8 September 2022
-- NASA-STD-8739.9, *Software Formal Inspections Standard*, approved 17 June 2013 with Change 1 dated 7 October 2016
+This plan says which assurance practices ARES uses. Measured results are only in `VERIFICATION_REPORT.md`.
 
-The standards catalog page for NASA-STD-8739.9 lists that document as inactive. This plan uses it as a source of inspection practice, not as a current mandatory NASA standard.
+The post-release assurance assessment was performed against the frozen v1.0.0 baseline. It did not add a spacecraft feature, a fault family, a threshold change, or a recording-format change. ARES 1.0.0 does not control a real spacecraft. NASA safety-critical requirements, including SWE-219 MC/DC and SWE-220 cyclomatic compliance, are not formally invoked. Complexity 15 is a voluntary review threshold. Using that number is not a compliance claim.
 
-## Scope
+**IV&V NOT PERFORMED.** An author review, including an AI-assisted review, is not verification by an organization that is technically, managerially, and financially independent of development.
 
-Baseline: annotated tag `v1.0.0` at commit `fcb6eda24fbeaf5e42c0f403ba977af1e427c944`. This branch is `assurance/nasa-alignment`. It is not ARES v1.1 and does not add spacecraft features. The `v1.0.0` tag is not moved.
+## Baseline and applicability
 
-In scope: requirements derived from the implemented simulator, traceability, design notes, a C++20 coding standard, verification records, configuration management, toolchain confidence, a software-safety exercise, a risk register, defect handling, an inspection plan ready for a future human team, and measured metrics.
+The frozen product baseline is annotated tag `v1.0.0` at `fcb6eda24fbeaf5e42c0f403ba977af1e427c944`. Release tags are immutable. Git history is not rewritten to move a tag.
 
-Out of scope: flight qualification, a new fault family, threshold changes, recording-format changes, and any claim of NASA approval.
+NPR 7150.2D and NASA-STD-8739.8B apply to NASA work to the extent a contract or Center process says so. ARES has no NASA contract, Center, Safety and Mission Assurance organization, or Technical Authority. Requirements that need those organizations are Institutional / Not Applicable to Independent Project. Selected engineering practices are Voluntarily Adopted or Partially Implemented.
 
-## Applicability
+## Requirements and traceability
 
-NPR 7150.2D states that it applies to software created, acquired, or maintained by or for NASA to the extent specified in a contract, grant, or agreement, and that applicability inside NASA uses the software classes in its Appendix D. NASA-STD-8739.8B likewise applies to software created by or for NASA, and to other parties to the extent specified in their agreements. ARES has no NASA contract, no Center, no Safety and Mission Assurance organization, and no Technical Authority.
+Software requirements are ARES-owned statements in `REQUIREMENTS.md`. They describe the simulator that exists. They are not copies of SWE or SASS statements. `REQUIREMENTS_TRACEABILITY.md` maps each requirement to design, code, verification, and a hazard when one applies. A behavioral clause cites a test that asserts it. An architectural clause is marked Inspection.
 
-Institutional requirements that need those organizations are classified **Institutional / Not Applicable to Independent Project**. Selected engineering practices are **Voluntarily Adopted** or **Partially Implemented**. The mapping is `NASA_ALIGNMENT_MATRIX.md`. Tailoring is recorded there. There is no Technical Authority signature, which SWE-121 and SWE-125 require for relief from an applicable NASA requirement. That signature is not available, so the matrix is a project tailoring record, not an approved NASA requirements mapping matrix.
+## Architecture and implementation
 
-## Roles
+`docs/ARCHITECTURE.md` is the current-state architecture. Headers under `include/ares/` and the unit tests name the lower-level units. Implementation rules are `CODING_STANDARD.md`, `.clang-format`, `.clang-tidy`, and warnings as errors on ARES targets.
 
-| Role | Who | Limit |
-| --- | --- | --- |
-| Maintainer | Repository author | Owns the baseline, reviews, and release tags |
-| Assurance author | This branch | Writes artifacts and runs the tools named in `METRICS.md` |
-| Future moderator, reader, recorder, inspectors | Not assigned | Required before any inspection under NASA-STD-8739.9 can be claimed |
-| NASA IV&V | None | IV&V was not performed |
+## Coding standard
 
-NASA-STD-8739.8B defines Independent Verification and Validation as verification and validation by an organization that is technically, managerially, and financially independent of the development organization. Neither the author reviewing this code nor an assistant reviewing it for the author meets that definition. **IV&V NOT PERFORMED.**
+`CODING_STANDARD.md` is the C++ rule set: explicit-width integers, no dumped C++ structs in the recording, checked arithmetic, joined threads, and the simulation/flight boundary. Format and tidy enforce layout and a subset of those rules. They do not measure coverage or complexity.
 
-## Requirements, design, and implementation
+## Verification strategy
 
-Software requirements are ARES-owned statements in `REQUIREMENTS.md`. They describe the system that exists. They are not copies of SWE or SASS statements. Traceability is in `REQUIREMENTS_TRACEABILITY.md`. Design evidence is `DESIGN_ASSURANCE.md` plus the existing architecture documents. Implementation rules are `CODING_STANDARD.md`.
+Results are recorded only in `VERIFICATION_REPORT.md`. The strategy is:
 
-## Verification
+- Unit tests under `tests/unit/` for clocks, tasks, the supervisor, modes, faults, recovery, sensors, and replay. Timing tests advance `ManualClock`. Noise tests pass an explicit seed.
+- Integration tests under `tests/integration/` for boot, exit codes, campaigns, and recordings.
+- Fault-injection campaigns (`ChaosCampaign.*` and `SensorInjection.*`) for the frozen scenarios.
+- Regression is the full Debug and Release ctest suites plus the GitHub Actions jobs: Linux Debug with format and tidy, Linux Release, Linux ASan/UBSan, and Windows UCRT64 Debug.
+- Static analysis is clang-tidy, clang-format, and compiler warnings as errors. clang-tidy is not a coverage or complexity tool.
+- Dynamic analysis is AddressSanitizer and UndefinedBehaviorSanitizer on the Linux Clang preset. ThreadSanitizer is not available in the current WSL mapping and is not claimed.
+- Record and replay tests check format 1.0. Replay does not re-execute flight code.
+- Coverage is a separate `-DARES_ENABLE_COVERAGE=ON` build, then `ares-coverage` (gcovr line, function, and branch). It is not MC/DC and not a percentage gate.
+- Complexity is `ares-complexity` (lizard). Functions above 15 are reviewed. They are not treated as a SWE-220 waiver.
+- `scripts/demo_v1.sh` and `scripts/demo_v1.ps1` are operator checks. ManualClock campaigns are the repeatable evidence.
 
-`VERIFICATION_PLAN.md` separates unit tests, integration tests, fault-injection campaigns, regression, sanitizers, static analysis, record/replay checks, coverage, complexity, and the release demos. `VERIFICATION_REPORT.md` records what this branch actually ran.
+The GoogleTest suite was written with the code. It is not an independent test organization.
 
-## Configuration, risk, and defects
+## Configuration management
 
-Controlled items and the frozen tag are in `CONFIGURATION_MANAGEMENT_PLAN.md`. Risks are qualitative and live in `RISK_REGISTER.md`. Future defects follow `DEFECT_MANAGEMENT.md`. No historical defect database is invented.
+Git is the configuration-control system. Controlled items are source under `include/ares/`, `src/`, and `tests/`; `CMakeLists.txt`, `CMakePresets.json`, and `cmake/`; `.github/workflows/ci.yml`; `.clang-format` and `.clang-tidy`; `scripts/demo_v1.sh`, `scripts/demo_v1.ps1`, `scripts/measure_coverage.ps1`, and `scripts/measure_complexity.ps1`; requirements, architecture notes, and `docs/assurance/`; scenario schedules; and the recorder layout in `include/ares/recorder/format.hpp`.
+
+The application version is `project(ARES VERSION 1.0.0)`. The recording format version is independent and remains 1.0. `docs/RELEASE_NOTES.md` describes the tags. CPack builds TGZ and ZIP archives from a tag.
+
+Build directories, recordings, and local packages are not controlled. `.gitignore` excludes them.
+
+A change to flight thresholds, mode transitions, scenario timing, capacities, or the recording format needs a justification, review, and tests. There is no NASA change-control board. The maintainer authorizes changes. Configuration status is `git status`, `git describe`, and `git tag --list`.
+
+## Risk and defect handling
+
+Remaining engineering risks are in `RISK_REGISTER.md`. Likelihood and impact are qualitative.
+
+ARES severities are Critical, High, Medium, and Low. They are not NASA formal-inspection classifications, and they are not the SWE-202 loss-of-life classes. ARES does not fly.
+
+A Critical or High fix requires a root-cause note, the correction, a regression test, and a recorded verification run. Update the traceability row when a requirement was wrong. No historical defect database is kept. No Critical or High product defect is open against the frozen flight code.
 
 ## Hazard analysis
 
-`HAZARD_ANALYSIS.md` is a software safety analysis exercise for a workstation simulator. It is not an approved vehicle or system hazard analysis. ARES 1.0.0 does not control a real spacecraft.
+`HAZARD_ANALYSIS.md` models twelve simulator conditions and their controls. Effects are wrong mode, lost diagnostic evidence, or a stopped mission inside the simulation. The exercise does not classify ARES as safety-critical and does not state loss of crew or loss of a vehicle.
 
-## Safety-critical applicability
+## Peer-review status
 
-NASA-STD-8739.8B defines safety-critical software as software that causes or contributes to a system hazard, controls or mitigates one, controls a safety-critical function, mitigates damage, or detects and corrects a potentially hazardous state, when that determination is traceable to a hazard analysis. NPR 7150.2D section 3.7 then adds further requirements, including SWE-219 (100 percent MC/DC for identified safety-critical components) and SWE-220 (cyclomatic complexity of 15 or lower for those components, with waiver by the project manager or technical approval authority).
+A human NASA Formal Inspection has not been performed. NASA-STD-8739.9 calls for a trained moderator and a team of at least three. That team was not convened. An AI-assisted review is not a NASA Formal Inspection.
 
-ARES does not control physical hardware. No actual system hazard analysis has classified it. No NASA Technical Authority has classified it. NASA safety-critical requirements are therefore not formally invoked. Selected practices may be applied voluntarily as a stronger engineering target.
-
-This branch does **not** claim:
-
-- official safety-critical classification
-- SWE-219 or 100 percent MC/DC
-- SWE-220 cyclomatic-complexity compliance
-- NASA Technical Authority approval
-- NASA IV&V
-- NASA Formal Inspection or SFI compliance
-
-Cyclomatic complexity is measured against a voluntary review threshold of 15 for flight-side functions. That threshold is the same number SWE-220 uses. Using the number is not a compliance claim.
-
-## Peer review
-
-`INSPECTION_PLAN.md` and `SOURCE_CODE_INSPECTION_CHECKLIST.md` are ready for a future human team. NASA-STD-8739.9 section 5.2 requires a team of at least three inspectors, including a moderator and the author, and trained moderators (SFI-005, SFI-006). This branch does not have that team. The review performed while writing these artifacts is an **AI-assisted assurance review** and a **NASA-STD-8739.9-inspired source code review**. It is not a NASA Formal Inspection.
+A future peer review can use `REQUIREMENTS.md`, `CODING_STANDARD.md`, the tests, and `REQUIREMENTS_TRACEABILITY.md` as inputs. `CONTRIBUTING.md` lists the engineering checks for an ordinary change. No inspection measurements exist, because no formal inspection was held.
 
 ## Metrics and release gates
 
-`METRICS.md` lists only values produced by a named tool and command. Acceptance criteria for this branch are in `ASSURANCE_REPORT.md`. NASA approval is not an acceptance criterion.
+`VERIFICATION_REPORT.md` is the record of test counts, coverage, complexity, format, tidy, and sanitizers. NASA approval is not a release gate. A normal Debug or Release configure leaves coverage and sanitizers off.
 
-## Claims explicitly not made
+## Claims not made
 
-ARES is not NASA compliant, NASA certified, NASA approved, flight qualified, DO-178C compliant, formally NASA IV&V'd, or the subject of a completed NASA Software Formal Inspection. NASA tool accreditation was not performed (see `TOOLCHAIN_CONFIDENCE.md`, which addresses the intent of SWE-136 without claiming accreditation).
+NASA tool accreditation was not performed. SWE-136 is Not Implemented. Agreement among the compiler, the test suite, Linux ASan/UBSan, and ManualClock campaigns raises confidence. It is not accreditation.
+
+Also not claimed: official safety-critical classification, SWE-219, SWE-220 compliance, NASA Technical Authority approval, NASA IV&V, and a completed NASA Software Formal Inspection.

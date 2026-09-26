@@ -104,7 +104,7 @@ target_link_libraries(ares_hardware INTERFACE ares_core)
 
 add_library(ares_flight STATIC
     src/flight/mode_machine.cpp
-    src/flight/example_tasks.cpp
+    src/flight/flight_tasks.cpp
     src/flight/executive.cpp
 )
 target_include_directories(ares_flight PUBLIC ${PROJECT_SOURCE_DIR}/include)
@@ -170,7 +170,7 @@ if(BUILD_TESTING)
         tests/unit/periodic_task_test.cpp
         tests/unit/mode_machine_test.cpp
         tests/unit/executive_test.cpp
-        tests/unit/example_tasks_test.cpp
+        tests/unit/flight_tasks_test.cpp
         tests/unit/launch_options_test.cpp
         tests/integration/task_supervisor_test.cpp
         tests/integration/boot_sequence_test.cpp
@@ -228,7 +228,6 @@ install(FILES
     docs/RELEASE_NOTES.md
     docs/ARCHITECTURE.md
     docs/PRODUCT_SPEC.md
-    docs/ROADMAP.md
     docs/MEMORY.md
     docs/FLIGHT_RECORDER.md
     docs/REPLAY.md
