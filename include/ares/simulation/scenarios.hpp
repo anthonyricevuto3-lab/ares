@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <string_view>
 
 namespace ares::simulation {
@@ -51,6 +52,18 @@ inline constexpr ChaosEvent kMixedFaultEvents[] = {
      std::chrono::seconds{2}, 10800, 0},
 };
 
+// Same injection as the campaign success case: 150 ms of extra navigation time for 1 s.
+inline constexpr ChaosEvent kNavigationRestartEvents[] = {
+    {InjectionKind::TaskExecutionDelay, ChaosTarget::NavigationTask, std::chrono::seconds{1},
+     std::chrono::seconds{1}, 150000000, 0},
+};
+
+// Same injection as the campaign failure case: the delay outlasts both restart attempts.
+inline constexpr ChaosEvent kRestartFailEvents[] = {
+    {InjectionKind::TaskExecutionDelay, ChaosTarget::NavigationTask, std::chrono::seconds{1},
+     std::chrono::seconds{30}, 150000000, 0},
+};
+
 inline constexpr NamedScenario kScenarios[] = {
     {"nominal", nullptr, 0, 0},
     {"gps_stale", kGpsStaleEvents, 1, 0},
@@ -59,7 +72,56 @@ inline constexpr NamedScenario kScenarios[] = {
     {"low_battery", kLowBatteryEvents, 1, 12400},
     {"deadline_storm", kDeadlineStormEvents, 1, 0},
     {"mixed_faults", kMixedFaultEvents, 2, 12400},
+    {"nav_restart", kNavigationRestartEvents, 1, 0},
+    {"restart_fail", kRestartFailEvents, 1, 0},
 };
+
+struct ScenarioInfo {
+    std::string_view name{};
+    std::string_view summary{};
+};
+
+inline constexpr ScenarioInfo kScenarioInfo[] = {
+    {"nominal", "No injected fault conditions."},
+    {"gps_stale", "Primary GPS freeze, then backup failover and verification."},
+    {"gps_unavailable", "Primary GPS reports unavailable for a bounded window."},
+    {"imu_invalid", "IMU reports invalid for a bounded window."},
+    {"low_battery", "Battery voltage drops below the safe-mode threshold, then restores."},
+    {"deadline_storm", "Navigation delay long enough to escalate, then the fault clears."},
+    {"mixed_faults", "Overlapping GPS freeze and low battery."},
+    {"nav_restart", "Short navigation delay. One restart verifies and returns to Standby."},
+    {"restart_fail", "Held navigation delay. Both restart attempts fail in SafeMode."},
+};
+
+[[nodiscard]] constexpr bool scenario_catalog_matches() noexcept {
+    constexpr std::size_t count = sizeof(kScenarios) / sizeof(NamedScenario);
+    constexpr std::size_t described = sizeof(kScenarioInfo) / sizeof(ScenarioInfo);
+    if (count != described) {
+        return false;
+    }
+    const NamedScenario* scenario = kScenarios;
+    const ScenarioInfo* info = kScenarioInfo;
+    const NamedScenario* const end = kScenarios + count;
+    for (; scenario != end; ++scenario, ++info) {
+        if (scenario->name != info->name) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static_assert(scenario_catalog_matches());
+
+[[nodiscard]] inline std::string scenario_catalog_text() {
+    std::string text;
+    for (const ScenarioInfo& info : kScenarioInfo) {
+        text.append(info.name);
+        text.append("  ");
+        text.append(info.summary);
+        text.push_back('\n');
+    }
+    return text;
+}
 
 [[nodiscard]] inline const NamedScenario* find_scenario(std::string_view name) noexcept {
     for (const NamedScenario& scenario : kScenarios) {

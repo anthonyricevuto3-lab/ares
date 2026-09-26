@@ -38,6 +38,19 @@ TEST(LaunchOptions, HelpDoesNotRequireAProgramName) {
     const ares::ArgumentParse parsed = parse({"--help"});
     EXPECT_EQ(parsed.status, ares::ArgumentStatus::Help);
     EXPECT_NE(parsed.message.find("Usage:"), std::string::npos);
+    EXPECT_NE(parsed.message.find("ARES v0.7.0"), std::string::npos);
+    EXPECT_NE(parsed.message.find("--list-scenarios"), std::string::npos);
+}
+
+TEST(LaunchOptions, ListsScenariosInCatalogOrder) {
+    const ares::ArgumentParse parsed = parse({"--list-scenarios"});
+    EXPECT_EQ(parsed.status, ares::ArgumentStatus::ListScenarios);
+    const std::string& text = parsed.message;
+    EXPECT_EQ(text.find("nominal"), 0U);
+    EXPECT_LT(text.find("nominal"), text.find("gps_stale"));
+    EXPECT_LT(text.find("gps_stale"), text.find("nav_restart"));
+    EXPECT_LT(text.find("nav_restart"), text.find("restart_fail"));
+    EXPECT_NE(text.find("Primary GPS freeze"), std::string::npos);
 }
 
 TEST(LaunchOptions, DefaultsToTheNominalScenarioAndAcceptsASeed) {

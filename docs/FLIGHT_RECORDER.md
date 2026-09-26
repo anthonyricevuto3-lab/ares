@@ -16,7 +16,7 @@ The flight path keeps a fixed prefix of 256 slots. Append copies one 32-byte pay
 
 ## File layout
 
-Every recording starts with a 64-byte header. Every record is an explicit little-endian field encoding. The file does not dump C++ object memory. Format version 1.0 is separate from ARES 0.6.0. Replay accepts major 1 and minor 0 only.
+Every recording starts with a 64-byte header. Every record is an explicit little-endian field encoding. The file does not dump C++ object memory. Format version 1.0 is separate from the ARES application version stored in the header. Replay accepts major 1 and minor 0 only. It does not reject a file because that application version changed.
 
 ```
 +----------------------------------------------+

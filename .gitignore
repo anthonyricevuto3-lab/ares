@@ -4,6 +4,15 @@ AGENTS.md
 build/
 cmake-build-*/
 out/
+Testing/
+*.bin
+*.stackdump
+*.dmp
+*.gcda
+*.gcno
+*.gcov
+*.profraw
+*.profdata
 .vs/
 .idea/
 .cache/

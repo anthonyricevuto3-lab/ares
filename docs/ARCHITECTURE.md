@@ -155,6 +155,12 @@ A verified isolated primary warning stays in the registry and stops blocking mod
 
 Disk I/O runs on the main thread in `commit()`, after workers have stopped. The flight path only copies a fixed slot under one recorder mutex. `--record FILE` opens that file before boot and truncates it. Omitting it leaves recording disabled. Record sequence is the order in the file. Logical timestamps may decrease across threads, and replay keeps sequence order. `ares-replay` reads the file and does not start a mission.
 
+## v0.7 Deployment and release hardening
+
+v0.7 does not add a spacecraft subsystem. It packages the frozen flight software so another engineer can configure, test, install, and demonstrate it. CMake presets are `debug`, `release`, and `asan-ubsan`. Project warnings stay on ARES targets. Release uses the compiler's normal optimizer and does not enable fast-math. `ares --list-scenarios` prints the named schedules. A mission prints one deterministic summary after shutdown: version, scenario, seed, final mode, navigation generation, selected GPS, retained fault and recovery counts, recording status, and the process exit name. That summary reads state. It does not change it.
+
+`nav_restart` and `restart_fail` are named copies of the existing campaign schedules. They do not add a recovery action. `docs/DEMO.md` is the walkthrough. `docs/MEMORY.md` lists the fixed flight-side capacities.
+
 ## Build
 
-C++20, CMake, and Ninja. GoogleTest 1.15.2 is fetched by URL and hash. Warnings are errors on project targets. `ARES_ENABLE_SANITIZERS` adds ASan and UBSan for Clang and GCC, and ASan for MSVC, after a configure-time link check. The `debug-sanitizers` preset and CI turn that on for a Debug build. Sanitizers are off unless requested. The current MSYS2 UCRT64 GCC cannot link them because the runtime libraries are absent; CI uses Clang on Ubuntu, where they are present.
+C++20, CMake 3.20, and Ninja. The supported compilers are GCC and Clang. MSVC is not supported because spacecraft integration uses `__int128`. On Windows, use an MSYS2 UCRT64 shell. GoogleTest 1.15.2 is fetched by URL and hash. Warnings are errors on project targets and are not applied to GoogleTest. `ARES_ENABLE_SANITIZERS` adds ASan and UBSan for Clang and GCC after a configure-time link check. The `asan-ubsan` preset turns that on for a Debug build. Sanitizers are off in `debug` and `release`. The current MSYS2 UCRT64 GCC cannot link them because the runtime libraries are absent; CI uses Clang on Ubuntu, where they are present. Format and tidy targets are `ares-format-check` and `ares-tidy`. They are not part of the default build.

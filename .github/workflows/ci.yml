@@ -8,9 +8,12 @@ permissions:
   contents: read
 
 jobs:
-  linux:
-    name: Debug build, test, format, tidy
+  linux-debug:
+    name: Linux Debug, format, tidy
     runs-on: ubuntu-latest
+    env:
+      CC: clang
+      CXX: clang++
     steps:
       - uses: actions/checkout@v4
 
@@ -18,27 +21,85 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ninja-build clang clang-format clang-tidy
 
       - name: Configure
-        run: >
-          cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=Debug
-          -DCMAKE_C_COMPILER=clang
-          -DCMAKE_CXX_COMPILER=clang++
-          -DARES_ENABLE_SANITIZERS=ON
-          -DARES_WARNINGS_AS_ERRORS=ON
-          -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+        run: cmake --preset debug
 
       - name: Build
-        run: cmake --build build
+        run: cmake --build --preset debug
 
       - name: Test
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --preset debug --output-on-failure
 
       - name: clang-format
-        run: >
-          find include src tests -type f \( -name '*.hpp' -o -name '*.cpp' \) -print0
-          | xargs -0 clang-format --dry-run --Werror
+        run: cmake --build build/debug --target ares-format-check
 
       - name: clang-tidy
-        run: >
-          find src -name '*.cpp' -print0
-          | xargs -0 clang-tidy -p build --warnings-as-errors='*'
+        run: cmake --build build/debug --target ares-tidy
+
+  linux-release:
+    name: Linux Release
+    runs-on: ubuntu-latest
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y ninja-build clang
+
+      - name: Configure
+        run: cmake --preset release
+
+      - name: Build
+        run: cmake --build --preset release
+
+      - name: Test
+        run: ctest --preset release --output-on-failure
+
+  linux-asan:
+    name: Linux ASan/UBSan
+    runs-on: ubuntu-latest
+    env:
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install toolchain
+        run: sudo apt-get update && sudo apt-get install -y ninja-build clang
+
+      - name: Configure
+        run: cmake --preset asan-ubsan
+
+      - name: Build
+        run: cmake --build --preset asan-ubsan
+
+      - name: Test
+        run: ctest --preset asan-ubsan --output-on-failure
+
+  windows-ucrt64:
+    name: Windows UCRT64 Debug
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-ninja
+
+      - name: Configure
+        run: cmake --preset debug
+
+      - name: Build
+        run: cmake --build --preset debug
+
+      - name: Test
+        run: ctest --preset debug --output-on-failure

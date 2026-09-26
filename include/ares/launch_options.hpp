@@ -1,6 +1,8 @@
 #pragma once
 
 #include "ares/core/time.hpp"
+#include "ares/simulation/scenarios.hpp"
+#include "ares/version.hpp"
 
 #include <charconv>
 #include <chrono>
@@ -19,7 +21,7 @@ struct LaunchOptions {
     std::string record_path{};
 };
 
-enum class ArgumentStatus { Ok, Help, Error };
+enum class ArgumentStatus { Ok, Help, ListScenarios, Error };
 
 struct ArgumentParse {
     ArgumentStatus status{ArgumentStatus::Ok};
@@ -27,19 +29,21 @@ struct ArgumentParse {
     std::string message{};
 };
 
-[[nodiscard]] constexpr std::string_view launch_help() noexcept {
-    return "ARES v0.6\n"
+[[nodiscard]] inline std::string launch_help() {
+    return std::string("ARES v") + kVersionString +
+           "\n"
            "Usage: ares [--duration-ms N] [--scenario NAME] [--seed N] [--record FILE]\n"
+           "       ares --list-scenarios\n"
            "\n"
            "Boot into Standby, accept StartMission, run three periodic tasks, and shut down.\n"
            "The default scenario is nominal: no injected fault conditions.\n"
            "\n"
-           "--duration-ms N   Keep tasks running for N milliseconds (default 250).\n"
-           "--scenario NAME   nominal, gps_stale, gps_unavailable, imu_invalid,\n"
-           "                  low_battery, deadline_storm, or mixed_faults.\n"
-           "--seed N          Mission noise seed (default 0). Scenarios use zero noise.\n"
-           "--record FILE     Write a binary mission recording. Omit to record nothing.\n"
-           "--help            Show this help.\n";
+           "--duration-ms N     Run tasks for N milliseconds (default 250).\n"
+           "--scenario NAME     Named chaos schedule (default nominal).\n"
+           "--list-scenarios    Print scenario names and one-line descriptions.\n"
+           "--seed N            Mission noise seed (default 0). Named scenarios use zero noise.\n"
+           "--record FILE       Write a binary mission recording. Omit to record nothing.\n"
+           "--help              Show this help.\n";
 }
 
 [[nodiscard]] inline ArgumentParse parse_arguments(std::span<const std::string_view> args) {
@@ -57,7 +61,12 @@ struct ArgumentParse {
         const std::string_view arg = *cursor;
         if (arg == "--help" || arg == "-h") {
             parsed.status = ArgumentStatus::Help;
-            parsed.message = std::string(launch_help());
+            parsed.message = launch_help();
+            return parsed;
+        }
+        if (arg == "--list-scenarios") {
+            parsed.status = ArgumentStatus::ListScenarios;
+            parsed.message = simulation::scenario_catalog_text();
             return parsed;
         }
         if (arg == "--duration-ms") {

@@ -1,4 +1,5 @@
 #include "ares/recorder/replay.hpp"
+#include "ares/version.hpp"
 
 #include <fstream>
 #include <iostream>
@@ -45,7 +46,13 @@ int main(int argc, char** argv) {
             continue;
         }
         if (argument == "--help" || argument == "-h") {
-            std::cout << "Usage: ares-replay [--verify] [--summary] FILE\n";
+            std::cout << "ARES replay " << ares::kVersionString
+                      << "\n"
+                         "Usage: ares-replay [--verify] [--summary] FILE\n"
+                         "\n"
+                         "--verify    Print valid or invalid and exit 0 or 1.\n"
+                         "--summary   Print the summary without the timeline.\n"
+                         "FILE        Recording written by ares --record.\n";
             return 0;
         }
         if (!path.empty() || argument.empty() || argument.starts_with('-')) {
@@ -60,7 +67,7 @@ int main(int argc, char** argv) {
     }
     std::vector<std::uint8_t> bytes;
     if (!read_file(path, bytes)) {
-        std::cerr << "record open failed\n";
+        std::cerr << "record open failed: " << path << '\n';
         return 1;
     }
     const ares::recorder::ReplayReport report = ares::recorder::replay_bytes(bytes);

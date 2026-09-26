@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ares/version.hpp"
+
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -9,9 +11,9 @@ namespace ares::recorder {
 
 inline constexpr std::uint16_t kFormatMajor = 1;
 inline constexpr std::uint16_t kFormatMinor = 0;
-inline constexpr std::uint16_t kApplicationMajor = 0;
-inline constexpr std::uint16_t kApplicationMinor = 6;
-inline constexpr std::uint16_t kApplicationPatch = 0;
+inline constexpr std::uint16_t kApplicationMajor = static_cast<std::uint16_t>(ares::kVersionMajor);
+inline constexpr std::uint16_t kApplicationMinor = static_cast<std::uint16_t>(ares::kVersionMinor);
+inline constexpr std::uint16_t kApplicationPatch = static_cast<std::uint16_t>(ares::kVersionPatch);
 inline constexpr std::uint32_t kEndianMarker = 0x01020304U;
 inline constexpr std::size_t kHeaderBytes = 64;
 inline constexpr std::size_t kRecordPrefix = 20;

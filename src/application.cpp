@@ -16,8 +16,10 @@
 #include "ares/simulation/chaos_engine.hpp"
 #include "ares/simulation/scenarios.hpp"
 #include "ares/simulation/sensors.hpp"
+#include "ares/version.hpp"
 
 #include <array>
+#include <atomic>
 #include <charconv>
 #include <chrono>
 #include <iostream>
@@ -69,6 +71,7 @@ struct MissionRuntime {
             spacecraft_.set_truth(truth);
         }
         scenario_name_ = scenario.name;
+        seed_ = options.seed;
     }
 
     core::SteadyClock clock_;
@@ -78,6 +81,7 @@ struct MissionRuntime {
     core::BoundedLog<core::DeadlineMissEvent<core::SteadyClock::time_point>, 32> misses_;
     simulation::ChaosEngine<core::SteadyClock> chaos_{};
     std::string scenario_name_{"nominal"};
+    std::uint64_t seed_{0};
     core::SimulatedExecution navigation_execution_{};
     core::SimulatedExecution communications_execution_{};
     simulation::SpacecraftModel<core::SteadyClock> spacecraft_;
@@ -136,21 +140,69 @@ void on_chaos_edge(const simulation::ChaosEdge& edge, core::SteadyClock::time_po
         edge, when.time_since_epoch().count());
 }
 
+void write_summary(const MissionRuntime& runtime, ExitCode code) {
+    using SteadyTime = core::SteadyClock::time_point;
+    std::uint32_t activations = 0;
+    std::uint32_t clears = 0;
+    std::uint32_t successes = 0;
+    std::uint32_t failures = 0;
+    const std::vector<flight::SystemEvent<SteadyTime>> events = runtime.events_.snapshot();
+    for (const flight::SystemEvent<SteadyTime>& event : events) {
+        if (std::holds_alternative<flight::FaultActivatedEvent<SteadyTime>>(event)) {
+            ++activations;
+        } else if (std::holds_alternative<flight::FaultClearedEvent<SteadyTime>>(event)) {
+            ++clears;
+        } else if (const auto* recovery = std::get_if<flight::RecoveryEvent<SteadyTime>>(&event)) {
+            if (recovery->notice == flight::RecoveryNotice::Succeeded) {
+                ++successes;
+            } else if (recovery->notice == flight::RecoveryNotice::Failed) {
+                ++failures;
+            }
+        }
+    }
+    const char* recording = "disabled";
+    if (runtime.recorder_.enabled()) {
+        if (runtime.recorder_.io_error()) {
+            recording = "failed";
+        } else if (runtime.recorder_.overflowed()) {
+            recording = "overflow";
+        } else {
+            recording = "written";
+        }
+    }
+    const char* gps =
+        runtime.selector_.selection() == flight::GpsSelection::Backup ? "backup" : "primary";
+    std::cout << "ARES " << kVersionString << '\n'
+              << "scenario: " << runtime.scenario_name_ << '\n'
+              << "seed: " << runtime.seed_ << '\n'
+              << "final_mode: " << flight::to_string(runtime.executive_.mode()) << '\n'
+              << "navigation_generation: "
+              << runtime.navigation_restart_.generation.load(std::memory_order_acquire) << '\n'
+              << "active_gps: " << gps << '\n'
+              << "fault_activations: " << activations << '\n'
+              << "fault_clears: " << clears << '\n'
+              << "recovery_successes: " << successes << '\n'
+              << "recovery_failures: " << failures << '\n'
+              << "recording: " << recording << '\n'
+              << "exit: " << exit_code_name(code) << '\n';
+}
+
 [[nodiscard]] int finish_mission(MissionRuntime& runtime, ExitCode code) {
-    if (!runtime.recorder_.enabled()) {
-        return to_int(code);
+    ExitCode reported = code;
+    if (runtime.recorder_.enabled()) {
+        const core::ClockSample<core::SteadyClock::time_point> now = runtime.clock_.now();
+        const std::int64_t stamp =
+            now.status == core::ClockStatus::Ok ? now.time.time_since_epoch().count() : 0;
+        (void)runtime.recorder_.seal(stamp, static_cast<std::uint8_t>(runtime.executive_.mode()),
+                                     to_int(code));
+        const bool wrote = runtime.recorder_.commit();
+        if (code == ExitCode::Success &&
+            (!wrote || runtime.recorder_.io_error() || runtime.recorder_.overflowed())) {
+            reported = ExitCode::RecorderFailed;
+        }
     }
-    const core::ClockSample<core::SteadyClock::time_point> now = runtime.clock_.now();
-    const std::int64_t stamp =
-        now.status == core::ClockStatus::Ok ? now.time.time_since_epoch().count() : 0;
-    (void)runtime.recorder_.seal(stamp, static_cast<std::uint8_t>(runtime.executive_.mode()),
-                                 to_int(code));
-    const bool wrote = runtime.recorder_.commit();
-    if (code == ExitCode::Success &&
-        (!wrote || runtime.recorder_.io_error() || runtime.recorder_.overflowed())) {
-        return to_int(ExitCode::RecorderFailed);
-    }
-    return to_int(code);
+    write_summary(runtime, reported);
+    return to_int(reported);
 }
 
 void publish_navigation_observation(MissionRuntime& runtime) {
@@ -219,7 +271,7 @@ int run(int argc, char** argv, InjectedFault fault) {
 
     const ArgumentParse parsed =
         parse_arguments(std::span<const std::string_view>(arguments.data(), arguments.size()));
-    if (parsed.status == ArgumentStatus::Help) {
+    if (parsed.status == ArgumentStatus::Help || parsed.status == ArgumentStatus::ListScenarios) {
         std::cout << parsed.message;
         return 0;
     }
@@ -229,7 +281,7 @@ int run(int argc, char** argv, InjectedFault fault) {
     }
     const simulation::NamedScenario* scenario = simulation::find_scenario(parsed.options.scenario);
     if (scenario == nullptr) {
-        std::cerr << "unknown scenario: " << parsed.options.scenario << '\n';
+        std::cerr << "unknown scenario: " << parsed.options.scenario << "\nUse --list-scenarios.\n";
         return to_int(ExitCode::UsageError);
     }
 

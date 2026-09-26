@@ -18,21 +18,45 @@
       }
     },
     {
-      "name": "debug-sanitizers",
+      "name": "release",
+      "displayName": "Release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "ARES_ENABLE_SANITIZERS": "OFF",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    },
+    {
+      "name": "asan-ubsan",
       "displayName": "Debug with ASan and UBSan",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build/debug-sanitizers",
+      "binaryDir": "${sourceDir}/build/asan-ubsan",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "ARES_ENABLE_SANITIZERS": "ON",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
       }
+    },
+    {
+      "name": "debug-sanitizers",
+      "displayName": "Debug with ASan and UBSan (alias)",
+      "inherits": "asan-ubsan"
     }
   ],
   "buildPresets": [
     {
       "name": "debug",
       "configurePreset": "debug"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release"
+    },
+    {
+      "name": "asan-ubsan",
+      "configurePreset": "asan-ubsan"
     },
     {
       "name": "debug-sanitizers",
@@ -43,6 +67,20 @@
     {
       "name": "debug",
       "configurePreset": "debug",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "asan-ubsan",
+      "configurePreset": "asan-ubsan",
       "output": {
         "outputOnFailure": true
       }

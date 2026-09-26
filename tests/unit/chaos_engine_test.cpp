@@ -139,6 +139,16 @@ TEST(ChaosEngine, NamedScenariosAreBounded) {
     EXPECT_EQ(simulation::find_scenario("low_battery")->battery_baseline_mv, 12400);
     EXPECT_EQ(simulation::find_scenario("deadline_storm")->events[0].target,
               simulation::ChaosTarget::NavigationTask);
+    const simulation::NamedScenario* restart = simulation::find_scenario("nav_restart");
+    const simulation::NamedScenario* failed = simulation::find_scenario("restart_fail");
+    ASSERT_NE(restart, nullptr);
+    ASSERT_NE(failed, nullptr);
+    EXPECT_EQ(restart->count, 1U);
+    EXPECT_EQ(restart->events[0].duration, 1s);
+    EXPECT_EQ(restart->events[0].parameter, 150000000);
+    EXPECT_EQ(failed->events[0].duration, 30s);
+    EXPECT_EQ(failed->events[0].parameter, 150000000);
+    EXPECT_EQ(failed->events[0].target, simulation::ChaosTarget::NavigationTask);
 }
 
 TEST(ChaosEngine, CommunicationsDelayMissesThroughTheDeadlineMonitor) {

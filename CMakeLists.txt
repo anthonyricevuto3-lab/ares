@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(ARES
-    VERSION 0.6.0
+    VERSION 0.7.0
     DESCRIPTION "Autonomous Resilient Embedded Spacecraft System"
     LANGUAGES CXX
 )
@@ -17,6 +17,28 @@ endif()
 
 option(ARES_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 option(ARES_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+
+# Spacecraft integration uses __int128. MSVC and clang-cl are not supported.
+if(MSVC OR CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+    message(FATAL_ERROR
+        "ARES requires GCC or Clang with __int128. MSVC is not supported. "
+        "On Windows, configure from an MSYS2 UCRT64 shell.")
+endif()
+
+configure_file(
+    ${PROJECT_SOURCE_DIR}/cmake/version.hpp.in
+    ${PROJECT_BINARY_DIR}/generated/ares/version.hpp
+    @ONLY
+)
+
+# Release is the compiler's normal optimized build (-O3 and NDEBUG on GCC/Clang).
+# Flight checks are explicit. They are not assert(), so NDEBUG does not remove them.
+# Fast-math is left off so checked integer paths keep IEEE and wraparound behavior.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    add_compile_options(
+        "$<$<OR:$<CONFIG:Release>,$<CONFIG:RelWithDebInfo>,$<CONFIG:MinSizeRel>>:-fno-fast-math>"
+    )
+endif()
 
 if(ARES_ENABLE_SANITIZERS)
     if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
@@ -35,10 +57,6 @@ if(ARES_ENABLE_SANITIZERS)
         endif()
         add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all)
         add_link_options(-fsanitize=address,undefined)
-    elseif(MSVC)
-        string(REGEX REPLACE "/RTC[^ ]*" "" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
-        add_compile_options(/fsanitize=address)
-        add_link_options(/INCREMENTAL:NO /fsanitize=address)
     else()
         message(FATAL_ERROR "ARES_ENABLE_SANITIZERS is not supported for ${CMAKE_CXX_COMPILER_ID}")
     endif()
@@ -46,18 +64,13 @@ endif()
 
 find_package(Threads REQUIRED)
 
+# Warnings apply to ARES targets only. GoogleTest is a SYSTEM include and is not compiled with -Werror.
 function(ares_configure_target target)
     target_compile_features(${target} PUBLIC cxx_std_20)
-    if(MSVC)
-        target_compile_options(${target} PRIVATE /W4 /permissive- /Zc:__cplusplus)
-        if(ARES_WARNINGS_AS_ERRORS)
-            target_compile_options(${target} PRIVATE /WX)
-        endif()
-    else()
-        target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wnon-virtual-dtor)
-        if(ARES_WARNINGS_AS_ERRORS)
-            target_compile_options(${target} PRIVATE -Werror)
-        endif()
+    target_compile_options(${target} PRIVATE
+        -Wall -Wextra -Wpedantic -Wconversion -Wshadow -Wnon-virtual-dtor)
+    if(ARES_WARNINGS_AS_ERRORS)
+        target_compile_options(${target} PRIVATE -Werror)
     endif()
 endfunction()
 
@@ -95,7 +108,10 @@ ares_configure_target(ares_simulation)
 add_library(ares_recorder STATIC
     src/recorder/replay.cpp
 )
-target_include_directories(ares_recorder PUBLIC ${PROJECT_SOURCE_DIR}/include)
+target_include_directories(ares_recorder PUBLIC
+    ${PROJECT_SOURCE_DIR}/include
+    ${PROJECT_BINARY_DIR}/generated
+)
 target_link_libraries(ares_recorder PUBLIC ares_flight ares_simulation)
 ares_configure_target(ares_recorder)
 
@@ -169,17 +185,81 @@ if(BUILD_TESTING)
         tests/integration/chaos_campaign_test.cpp
         tests/unit/flight_recorder_test.cpp
         tests/unit/replay_test.cpp
+        tests/unit/resource_budget_test.cpp
     )
     target_link_libraries(ares_tests PRIVATE ares_app GTest::gtest_main)
     ares_configure_target(ares_tests)
 
     include(GoogleTest)
     gtest_discover_tests(ares_tests
-        PROPERTIES TIMEOUT 30
-        DISCOVERY_TIMEOUT 60
+        PROPERTIES TIMEOUT 60
+        DISCOVERY_TIMEOUT 120
     )
     add_test(NAME ares_smoke COMMAND ares --duration-ms 100)
-    set_tests_properties(ares_smoke PROPERTIES TIMEOUT 30)
+    set_tests_properties(ares_smoke PROPERTIES TIMEOUT 60 LABELS "smoke;integration")
+    file(GENERATE
+        OUTPUT "${CMAKE_BINARY_DIR}/ares_apply_labels.cmake"
+        CONTENT "set(ARES_BINARY_DIR [[${CMAKE_BINARY_DIR}]])\ninclude([[${CMAKE_CURRENT_SOURCE_DIR}/cmake/ares_test_labels.cmake]])\n"
+    )
+    set_property(DIRECTORY APPEND PROPERTY TEST_INCLUDE_FILES
+        "${CMAKE_BINARY_DIR}/ares_apply_labels.cmake")
 endif()
+
+include(GNUInstallDirs)
+install(TARGETS ares ares-replay RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(FILES
+    README.md
+    CONTRIBUTING.md
+    docs/DEMO.md
+    docs/ARCHITECTURE.md
+    docs/PRODUCT_SPEC.md
+    docs/ROADMAP.md
+    docs/MEMORY.md
+    docs/FLIGHT_RECORDER.md
+    docs/REPLAY.md
+    docs/RECOVERY.md
+    docs/FAULT_MODEL.md
+    docs/CHAOS_ENGINE.md
+    DESTINATION ${CMAKE_INSTALL_DOCDIR}
+)
+
+set(CPACK_PACKAGE_NAME "ares")
+set(CPACK_PACKAGE_VENDOR "ARES")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Autonomous Resilient Embedded Spacecraft System")
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_GENERATOR "TGZ;ZIP")
+set(CPACK_VERBATIM_VARIABLES ON)
+set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY ON)
+include(CPack)
+
+find_program(ARES_CLANG_FORMAT NAMES clang-format)
+find_program(ARES_CLANG_TIDY NAMES clang-tidy)
+add_custom_target(ares-format-check
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_DIR=${PROJECT_SOURCE_DIR}
+        -DCLANG_FORMAT=${ARES_CLANG_FORMAT}
+        -DFIX=OFF
+        -P ${PROJECT_SOURCE_DIR}/cmake/format_check.cmake
+    COMMENT "Checking C++ formatting"
+    VERBATIM
+)
+add_custom_target(ares-format
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_DIR=${PROJECT_SOURCE_DIR}
+        -DCLANG_FORMAT=${ARES_CLANG_FORMAT}
+        -DFIX=ON
+        -P ${PROJECT_SOURCE_DIR}/cmake/format_check.cmake
+    COMMENT "Formatting C++ sources"
+    VERBATIM
+)
+add_custom_target(ares-tidy
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_DIR=${PROJECT_SOURCE_DIR}
+        -DBUILD_DIR=${PROJECT_BINARY_DIR}
+        -DCLANG_TIDY=${ARES_CLANG_TIDY}
+        -P ${PROJECT_SOURCE_DIR}/cmake/tidy.cmake
+    COMMENT "Running clang-tidy on ARES sources"
+    VERBATIM
+)
 
 message(STATUS "ARES ${PROJECT_VERSION} sanitizers=${ARES_ENABLE_SANITIZERS}")

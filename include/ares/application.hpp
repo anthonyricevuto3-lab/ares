@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <optional>
+#include <string_view>
 
 namespace ares {
 
@@ -31,6 +32,34 @@ enum class InjectedFault : std::uint8_t { None, WorkerThrows, ScheduleOverflow }
 
 [[nodiscard]] constexpr int to_int(ExitCode code) noexcept {
     return static_cast<int>(code);
+}
+
+[[nodiscard]] constexpr std::string_view exit_code_name(ExitCode code) noexcept {
+    switch (code) {
+    case ExitCode::Success:
+        return "Success";
+    case ExitCode::BootFailed:
+        return "BootFailed";
+    case ExitCode::UsageError:
+        return "UsageError";
+    case ExitCode::WorkerException:
+        return "WorkerException";
+    case ExitCode::ScheduleFault:
+        return "ScheduleFault";
+    case ExitCode::HookFault:
+        return "HookFault";
+    case ExitCode::UnknownWorkerFault:
+        return "UnknownWorkerFault";
+    case ExitCode::StartupFailed:
+        return "StartupFailed";
+    case ExitCode::TimeError:
+        return "TimeError";
+    case ExitCode::FaultHistoryOverflow:
+        return "FaultHistoryOverflow";
+    case ExitCode::RecorderFailed:
+        return "RecorderFailed";
+    }
+    return "unknown";
 }
 
 // Exception outranks an unknown fault, then a schedule fault, then a hook fault.
