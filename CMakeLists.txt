@@ -17,6 +17,7 @@ endif()
 
 option(ARES_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 option(ARES_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(ARES_ENABLE_COVERAGE "Instrument ARES with compiler coverage counters" OFF)
 
 # Spacecraft integration uses __int128. MSVC and clang-cl are not supported.
 if(MSVC OR CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
@@ -60,6 +61,19 @@ if(ARES_ENABLE_SANITIZERS)
     else()
         message(FATAL_ERROR "ARES_ENABLE_SANITIZERS is not supported for ${CMAKE_CXX_COMPILER_ID}")
     endif()
+endif()
+
+if(ARES_ENABLE_COVERAGE)
+    if(ARES_ENABLE_SANITIZERS)
+        message(FATAL_ERROR
+            "ARES_ENABLE_COVERAGE cannot be combined with ARES_ENABLE_SANITIZERS.")
+    endif()
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        message(FATAL_ERROR
+            "ARES_ENABLE_COVERAGE requires GCC or Clang gcov-compatible instrumentation.")
+    endif()
+    add_compile_options(--coverage)
+    add_link_options(--coverage)
 endif()
 
 find_package(Threads REQUIRED)
@@ -263,4 +277,27 @@ add_custom_target(ares-tidy
     VERBATIM
 )
 
-message(STATUS "ARES ${PROJECT_VERSION} sanitizers=${ARES_ENABLE_SANITIZERS}")
+add_custom_target(ares-coverage
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_DIR=${PROJECT_SOURCE_DIR}
+        -DBUILD_DIR=${PROJECT_BINARY_DIR}
+        -DCOVERAGE=${ARES_ENABLE_COVERAGE}
+        -P ${PROJECT_SOURCE_DIR}/cmake/coverage_report.cmake
+    COMMENT "Reporting line, function, and branch coverage"
+    VERBATIM
+)
+add_custom_target(ares-complexity
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_DIR=${PROJECT_SOURCE_DIR}
+        -DBUILD_DIR=${PROJECT_BINARY_DIR}
+        -P ${PROJECT_SOURCE_DIR}/cmake/complexity.cmake
+    COMMENT "Measuring cyclomatic complexity"
+    VERBATIM
+)
+add_custom_target(ares-assurance
+    COMMAND ${CMAKE_COMMAND} -E echo "Running format, tidy, and complexity. Coverage is a separate instrumented build."
+    DEPENDS ares-format-check ares-tidy ares-complexity
+    VERBATIM
+)
+
+message(STATUS "ARES ${PROJECT_VERSION} sanitizers=${ARES_ENABLE_SANITIZERS} coverage=${ARES_ENABLE_COVERAGE}")
