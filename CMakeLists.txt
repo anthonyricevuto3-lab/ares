@@ -17,6 +17,7 @@ endif()
 
 option(ARES_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" ON)
 option(ARES_ENABLE_SANITIZERS "Enable AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(ARES_ENABLE_COVERAGE "Instrument ARES with compiler coverage counters" OFF)
 
 # Spacecraft integration uses __int128. MSVC and clang-cl are not supported.
 if(MSVC OR CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
@@ -62,6 +63,19 @@ if(ARES_ENABLE_SANITIZERS)
     endif()
 endif()
 
+if(ARES_ENABLE_COVERAGE)
+    if(ARES_ENABLE_SANITIZERS)
+        message(FATAL_ERROR
+            "ARES_ENABLE_COVERAGE cannot be combined with ARES_ENABLE_SANITIZERS.")
+    endif()
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        message(FATAL_ERROR
+            "ARES_ENABLE_COVERAGE requires GCC or Clang gcov-compatible instrumentation.")
+    endif()
+    add_compile_options(--coverage)
+    add_link_options(--coverage)
+endif()
+
 find_package(Threads REQUIRED)
 
 # Warnings apply to ARES targets only. GoogleTest is a SYSTEM include and is not compiled with -Werror.
@@ -90,7 +104,7 @@ target_link_libraries(ares_hardware INTERFACE ares_core)
 
 add_library(ares_flight STATIC
     src/flight/mode_machine.cpp
-    src/flight/example_tasks.cpp
+    src/flight/flight_tasks.cpp
     src/flight/executive.cpp
 )
 target_include_directories(ares_flight PUBLIC ${PROJECT_SOURCE_DIR}/include)
@@ -156,7 +170,7 @@ if(BUILD_TESTING)
         tests/unit/periodic_task_test.cpp
         tests/unit/mode_machine_test.cpp
         tests/unit/executive_test.cpp
-        tests/unit/example_tasks_test.cpp
+        tests/unit/flight_tasks_test.cpp
         tests/unit/launch_options_test.cpp
         tests/integration/task_supervisor_test.cpp
         tests/integration/boot_sequence_test.cpp
@@ -214,7 +228,6 @@ install(FILES
     docs/RELEASE_NOTES.md
     docs/ARCHITECTURE.md
     docs/PRODUCT_SPEC.md
-    docs/ROADMAP.md
     docs/MEMORY.md
     docs/FLIGHT_RECORDER.md
     docs/REPLAY.md
@@ -263,4 +276,27 @@ add_custom_target(ares-tidy
     VERBATIM
 )
 
-message(STATUS "ARES ${PROJECT_VERSION} sanitizers=${ARES_ENABLE_SANITIZERS}")
+add_custom_target(ares-coverage
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_DIR=${PROJECT_SOURCE_DIR}
+        -DBUILD_DIR=${PROJECT_BINARY_DIR}
+        -DCOVERAGE=${ARES_ENABLE_COVERAGE}
+        -P ${PROJECT_SOURCE_DIR}/cmake/coverage_report.cmake
+    COMMENT "Reporting line, function, and branch coverage"
+    VERBATIM
+)
+add_custom_target(ares-complexity
+    COMMAND ${CMAKE_COMMAND}
+        -DSOURCE_DIR=${PROJECT_SOURCE_DIR}
+        -DBUILD_DIR=${PROJECT_BINARY_DIR}
+        -P ${PROJECT_SOURCE_DIR}/cmake/complexity.cmake
+    COMMENT "Measuring cyclomatic complexity"
+    VERBATIM
+)
+add_custom_target(ares-assurance
+    COMMAND ${CMAKE_COMMAND} -E echo "Running format, tidy, and complexity. Coverage is a separate instrumented build."
+    DEPENDS ares-format-check ares-tidy ares-complexity
+    VERBATIM
+)
+
+message(STATUS "ARES ${PROJECT_VERSION} sanitizers=${ARES_ENABLE_SANITIZERS} coverage=${ARES_ENABLE_COVERAGE}")

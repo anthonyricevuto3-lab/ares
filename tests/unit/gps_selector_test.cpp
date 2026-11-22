@@ -1,4 +1,4 @@
-#include "ares/flight/example_tasks.hpp"
+#include "ares/flight/flight_tasks.hpp"
 #include "ares/flight/gps_selector.hpp"
 #include "ares/simulation/sensors.hpp"
 

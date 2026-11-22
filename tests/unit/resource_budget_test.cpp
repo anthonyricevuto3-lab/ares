@@ -1,4 +1,7 @@
+#include "ares/application.hpp"
+#include "ares/core/bounded_log.hpp"
 #include "ares/core/event_log.hpp"
+#include "ares/core/task_events.hpp"
 #include "ares/core/periodic_task.hpp"
 #include "ares/flight/fault_mailbox.hpp"
 #include "ares/flight/mode.hpp"
@@ -11,6 +14,7 @@
 #include "ares/recorder/replay.hpp"
 #include "ares/simulation/chaos_engine.hpp"
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 
@@ -70,6 +74,37 @@ TEST(ResourceBudget, FullRecordingReplaysWithoutGrowingPastCapacity) {
     EXPECT_EQ(report.records.size(), 256U);
     EXPECT_TRUE(report.overflow);
     EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds{5});
+}
+
+TEST(MissHistory, ProductionCapacityKeepsThirtyTwoThenOverflows) {
+    // MissionRuntime::misses_ in src/application.cpp is this type and capacity.
+    using Miss = ares::core::DeadlineMissEvent<ares::core::SteadyClock::time_point>;
+    using Log = ares::core::BoundedLog<Miss, 32>;
+    Log log;
+    Miss sample{};
+    for (std::uint64_t index = 0; index < 32; ++index) {
+        sample.releases_skipped = index;
+        EXPECT_EQ(log.push(sample), Log::Push::Stored);
+    }
+    EXPECT_EQ(log.size(), 32U);
+    EXPECT_FALSE(log.overflowed());
+    EXPECT_EQ(log.overwrite_count(), 0U);
+    EXPECT_EQ(ares::combine_exit(ares::ExitCode::Success, log.overflowed()),
+              ares::ExitCode::Success);
+
+    sample.releases_skipped = 32;
+    EXPECT_EQ(log.push(sample), Log::Push::Overwrote);
+    EXPECT_EQ(log.size(), 32U);
+    EXPECT_TRUE(log.overflowed());
+    EXPECT_EQ(log.overwrite_count(), 1U);
+    std::array<Miss, 32> retained{};
+    EXPECT_EQ(log.copy_into(retained), 32U);
+    EXPECT_EQ(retained[0].releases_skipped, 1U);
+    EXPECT_EQ(retained[31].releases_skipped, 32U);
+    EXPECT_EQ(ares::combine_exit(ares::ExitCode::Success, log.overflowed()),
+              ares::ExitCode::FaultHistoryOverflow);
+    EXPECT_EQ(ares::combine_exit(ares::ExitCode::WorkerException, log.overflowed()),
+              ares::ExitCode::WorkerException);
 }
 
 TEST(ResourceBudget, SchedulerPollsStayBounded) {

@@ -76,6 +76,22 @@ cpack --config build/release/CPackConfig.cmake -G TGZ
 
 Windows release binaries need the UCRT64 runtime on `PATH`: `libstdc++-6.dll`, `libgcc_s_seh-1.dll`, and `libwinpthread-1.dll`. The package does not bundle those DLLs.
 
-## What not to add casually
+## Change rules
 
-Communications simulation, new recovery actions, GPS failback, checkpoint rollback, and a user interface are out of scope until a milestone says otherwise. The frozen behavior in v0.1 through v0.6 stays unless a change is an intentional, tested contract update.
+Do not change FDIR thresholds, recovery counts, mode tables, capacities, scenario timing, the recording format, or exit codes unless that change is the task and the tests are updated with it. Communications simulation, new recovery actions, GPS failback, checkpoint rollback, and a user interface are out of scope.
+
+A Critical or High defect needs a root-cause note, the correction, a regression test, and a recorded verification run. ARES severities are Critical, High, Medium, and Low. They are not NASA formal-inspection classifications.
+
+## Review checklist
+
+- Name the requirements this change affects, including values in `fdir_limits.hpp`.
+- Check indexes, buffer lengths, and arithmetic that can overflow, underflow, or divide by zero.
+- Keep time arithmetic inside the representable domain.
+- State which thread owns the data. Join every worker on shutdown. Do not detach a thread.
+- Do not let two navigation generations run together.
+- Keep fault and recovery writes on the health path. Chaos does not write the registry, recovery, or the mode machine.
+- Recovery does not call the mode machine. Success counts only after the verification samples.
+- Flight code does not include a concrete simulated device. The recorder does not change mode or clear a fault.
+- Bound parsed recording lengths and check the CRC. Replay does not start the flight executive.
+- Add or update a test that fails if the requirement is broken.
+- Run format and tidy. Explain a function whose cyclomatic complexity is above 15.

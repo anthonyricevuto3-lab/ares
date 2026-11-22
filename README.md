@@ -190,11 +190,19 @@ That installs `ares`, `ares-replay`, and the design docs. From the release build
 - Scenario names longer than 15 characters are truncated in the recording header. The shipped names fit.
 - MSVC is unsupported. Windows binaries need the UCRT64 runtime DLLs on `PATH`.
 
+## Software assurance
+
+ARES includes a post-release assessment against selected NASA software engineering and software assurance practices. The assessment covers requirements traceability, software hazards, verification evidence, coverage, complexity, and project-specific risk.
+
+See [docs/assurance/](docs/assurance/SOFTWARE_ASSURANCE_PLAN.md).
+
+This is an independent educational alignment exercise and does not represent NASA certification, approval, formal IV&V, or flight qualification.
+
 ## Documents
 
 - [docs/DEMO.md](docs/DEMO.md)
 - [docs/RELEASE_NOTES.md](docs/RELEASE_NOTES.md)
 - [docs/PRODUCT_SPEC.md](docs/PRODUCT_SPEC.md)
-- [docs/ROADMAP.md](docs/ROADMAP.md)
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - [docs/MEMORY.md](docs/MEMORY.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md)

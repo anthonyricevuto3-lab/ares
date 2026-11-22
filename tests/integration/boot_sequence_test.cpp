@@ -1,6 +1,6 @@
 #include "ares/core/bounded_log.hpp"
 #include "ares/core/task_supervisor.hpp"
-#include "ares/flight/example_tasks.hpp"
+#include "ares/flight/flight_tasks.hpp"
 #include "ares/flight/executive.hpp"
 
 #include <array>
